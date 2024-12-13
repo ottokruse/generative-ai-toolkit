@@ -1,4 +1,5 @@
-#!/bin/bash -euo pipefail
+#!/bin/bash
+set -euo pipefail
 
 # Copyright 2024 Amazon.com, Inc. and its affiliates. All Rights Reserved.
 #

@@ -57,6 +57,9 @@ The cookiecutter template in this repository will create a new Generative AI Too
 #### Prereqs
 
 - Install [cookiecutter](https://www.cookiecutter.io/), e.g. with: `pipx install cookiecutter`
+- Install [uv](https://github.com/astral-sh/uv) (the cookiecutter template uses `uv` to install Python dependencies; basically as a faster `pip`)
+- Install [Node.js and NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) (for installing and using AWS CDK)
+- You need to have Python 3.12 or higher (can easily be installed with `uv`, e.g.: `uv python install 3.12`)
 
 #### Usage
 
