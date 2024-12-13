@@ -71,6 +71,17 @@ cookiecutter https://github.com/awslabs/generative-ai-toolkit
 
 After this you can simply deploy your agent with `cdk deploy` and test it with the `test_function_url.sh` script. Follow the `README.md` in your new project folder for more details.
 
+##### Using the `uv` virtual environment in a Jupyter notebook (e.g. in an Amazon SageMaker notebook)
+
+The cookiecutter template uses `uv` to create a Python virtual environment. Add this virtual environment to the Jupyter kernel registry as follows:
+
+```shell
+# run this in the the directory that was created by applying the cookiecutter template, eg where the .venv folder is
+uv run python -m ipykernel install --user --name=uvvenv --display-name "Python (uvvenv)"
+```
+
+After that you should be able to select this kernel in your Jupyter notebook.
+
 ## 2.0 Generative AI Toolkit
 
 #### Table of Contents
