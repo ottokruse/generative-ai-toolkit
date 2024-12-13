@@ -12,9 +12,9 @@ The Generative AI Toolkit makes it easy to measure and test the performance of L
 
 To fully utilize the Generative AI Toolkit, it’s essential to understand the following key terms:
 
-- **Traces**: Traces are records of interactions between the user and the LLM or tools. They capture the entire request-response cycle, including input prompts, model outputs, tool calls, and metadata such as latency, token usage, and execution details. Traces form the foundation for evaluating an LLM's behavior and performance.
+- **Traces**: Traces are records of interactions between the user and the LLM or tools. They capture the entire request-response cycle, including input prompts, model outputs, tool calls, and metadata such as latency, token usage, and execution details. Traces form the foundation for evaluating an LLM-based application's behavior and performance.
 
-- **Metrics**: Metrics are measurements derived from traces that evaluate various aspects of an LLM's performance. Examples include latency, token usage, similarity with expected responses, sentiment, and cost. Metrics can be customized to measure specific behaviors or to enforce validation rules.
+- **Metrics**: Metrics are measurements derived from traces that evaluate various aspects of an LLM-based application's performance. Examples include latency, token usage, similarity with expected responses, sentiment, and cost. Metrics can be customized to measure specific behaviors or to enforce validation rules.
 
 - **Cases**: Cases are repeatable tests that simulate conversations with the agent. They consist of a sequence of user inputs and expected agent behaviors or outcomes. Cases are used to validate the agent's responses against defined expectations, ensuring consistent performance across scenarios.
 
@@ -38,7 +38,7 @@ You can bootstrap an AWS CDK project with a vanilla agent using the **cookiecutt
 
 ### Generative AI Toolkit Library
 
-You can install the `generative_ai_toolkit` and explore how to create reliable agents with it in an IPython notebook or interactive Python shell. Proceed to [2.0 Generative AI Toolkit Agent](#20-generative-ai-toolkit-agent).
+You can install the `generative_ai_toolkit` and explore how to create reliable LLM-based applications (such as agents) with it in an IPython notebook or interactive Python shell. Proceed to [2.0 Generative AI Toolkit](#20-generative-ai-toolkit).
 
 ### Examples
 
@@ -50,10 +50,9 @@ For instance, if you’re interested in generating SQL queries from natural lang
 
 These examples serve as practical guides and starting points for integrating the toolkit into your own workflows. Feel free to adapt and extend them to suit your specific application needs.
 
-
 ## 1.0 Cookiecutter template
 
-The cookiecutter template in this repository will create a new Generative AI Toolkit project for you: an AWS CDK project with sample code and a notebook with explanations, with a vanilla agent onboard that you can customize to your liking.
+The cookiecutter template in this repository will create a new Generative AI Toolkit project for you: an AWS CDK project that implements the [architecture depicted above](#architecture), with sample code and a notebook with explanations, and a vanilla agent onboard that you can customize to your liking.
 
 #### Prereqs
 
@@ -98,7 +97,7 @@ The heart of the Generative AI Toolkit are the traces it collects, that are the 
 
 A benefit of using this agent implementation, is that you can run the agent locally––it doesn't require any AWS deployment at all and only needs Amazon Bedrock model access. You can quickly iterate and try different agent settings, such as the backing LLM model id, system prompt, temperature, tools, etc. You can create repeatable test cases and run extensive and rigorous evaluations locally.
 
-> We'll first explain how our agent implementation works. Feel free to directly skip to the explanation of [Tracing](#tracing) or [Metrics](#metrics) instead.
+> We'll first explain how our agent implementation works. Feel free to directly skip to the explanation of [Tracing](#23-tracing) or [Metrics](#24-metrics) instead.
 
 The Generative AI Toolkit Agent implementation is simple and lightweight, and makes for a no-nonsense developer experience. You can easily instantiate and converse with agents while working in the Python interpreter (REPL) or in a notebook:
 
@@ -780,8 +779,8 @@ results = GenerativeAIToolkit.eval(metrics=[], traces=[traces])
 
 results.summary()
 
-for conversation in results:
-    for measurement in conversation.measurements:
+for conversation_measurements in results:
+    for measurement in conversation_measurements.measurements:
         print(measurement)
 ```
 
@@ -864,15 +863,29 @@ results = GenerativeAIToolkit.eval(
     traces=traces,
     metrics=metrics,
 )
-for conversation in results:
-    for conversation_traces in conversation.traces:
+for conversation_measurements in results:
+    # Emit EMF logs for measurements at conversation level:
+    last_trace = conversation_measurements.traces[-1].trace
+    timestamp = int(last_trace.trace_id.timestamp.timestamp() * 1000)
+    for measurement in conversation_measurements.measurements:
+        logger.metric(
+            measurement,
+            conversation_id=conversation_measurements.conversation_id,
+            additional_info=measurement.additional_info,
+            namespace="GenerativeAIToolkit",
+            common_dimensions={
+                "MyCommonDimension": "MyDimensionValue"
+            },
+            timestamp=timestamp,
+        )
+    # Emit EMF logs for measurements at trace level:
+    for conversation_traces in conversation_measurements.traces:
         trace = conversation_traces.trace
         timestamp = int(trace.trace_id.timestamp.timestamp() * 1000)
         for measurement in conversation_traces.measurements:
-            # This logs the measurement in EMF to stdout:
             logger.metric(
                 measurement,
-                conversation_id=conversation.conversation_id,
+                conversation_id=conversation_measurements.conversation_id,
                 trace_id=conversation_traces.trace.trace_id,
                 additional_info=measurement.additional_info,
                 namespace="GenerativeAIToolkit",
@@ -882,6 +895,8 @@ for conversation in results:
                 timestamp=timestamp,
             )
 ```
+
+> Note: the above is exactly what happens for you if you use the `generative_ai_toolkit.run.evaluate.AWSLambdaRunner`, e.g. as is done by <a href="./{{ cookiecutter.package_name }}/lib/evaluation/measure.py">the evaluation Lambda function in the cookiecutter template</a>.
 
 > Note: if you run the above in AWS Lambda, the custom metrics will now be generated, because AWS Lambda writes to Amazon CloudWatch Logs automatically. Elsewhere, you would still need to send the lines from `stdout` to Amazon CloudWatch Logs.
 
@@ -897,7 +912,7 @@ The [Cookiecutter template](#cookiecutter-template) includes an AWS CDK Stack th
 - An Amazon DynamoDB table to store conversation history and traces.
 - An AWS Lambda Function, that is attached to the DynamoDB table stream, to run `GenerativeAIToolkit.eval()` on the collected traces.
 
-See [streaming-agent.ts](cookiecutter-template/{{ cookiecutter.package_name }}/lib/streaming-agent.ts).
+See <a href="./{{ cookiecutter.package_name }}/lib/streaming-agent.ts">streaming-agent.ts</a>.
 
 #### Invoking the AWS Lambda Function URL with the `IamAuthInvoker`
 
@@ -953,7 +968,6 @@ The Generative AI Toolkit provides a local, web-based user interface (UI) to hel
 **Key Features:**
 
 - **Trace Inspection:** View the entire sequence of interactions, including user messages, agent responses, and tool invocations. Traces are displayed in chronological order, accompanied by detailed metadata (timestamps, token counts, latencies, costs), making it easier to pinpoint performance bottlenecks or unexpected behaviors.
-  
 - **Conversation Overview:** Each conversation is presented as a cohesive flow. You can navigate through every turn in a conversation to see how the context evolves over time, how the agent utilizes tools, and how different system prompts or model parameters influence the responses.
 
 - **Metrics and Evaluation Results:** When you run `GenerativeAIToolkit.eval()` on the collected traces, the UI provides a clear visualization of the results. This includes SQL query accuracy metrics, cost estimates, latency measurements, and custom validation checks. The UI helps you identify which cases passed or failed, and the reasons why.
@@ -983,6 +997,5 @@ This command runs a local web server (often at http://localhost:8000) where you 
 ```python
 results.stop_ui()
 ```
-
 
 The Web UI complements the command-line and code-based workflows, providing a more visual and interactive approach to debugging. By using this interface, you can refine your LLM-based application more efficiently before deploying it to production.
