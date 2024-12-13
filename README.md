@@ -76,7 +76,7 @@ After this you can simply deploy your agent with `cdk deploy` and test it with t
 The cookiecutter template uses `uv` to create a Python virtual environment. Add this virtual environment to the Jupyter kernel registry as follows:
 
 ```shell
-# run this in the the directory that was created by applying the cookiecutter template, eg where the .venv folder is
+# run this in the directory that was created by applying the cookiecutter template, i.e. where the .venv folder is
 uv run python -m ipykernel install --user --name=uvvenv --display-name "Python (uvvenv)"
 ```
 
@@ -491,6 +491,10 @@ Would e.g. print:
 |             1.0              |        371.0         |         42.5         |           3.0           |          2.0          |          1.0           |        0        |        0        |
 +------------------------------+----------------------+----------------------+-------------------------+-----------------------+------------------------+-----------------+-----------------+
 ```
+
+#### Template for Custom Metrics
+
+Use [TEMPLATE_metric.py](src/generative_ai_toolkit/metrics/modules/TEMPLATE_metric.py) as a starting point for creating your own custom metrics. This file includes more information on the data model, as well as more examples.
 
 #### Passing or Failing a Custom Metric
 
