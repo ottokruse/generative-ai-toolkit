@@ -86,7 +86,9 @@ def get_sampling_rate():
             int(
                 ssm.get_parameter(
                     Name=os.environ["SAMPLING_RATE_PARAM_NAME"],
-                )["Parameter"]["Value"]
+                )[
+                    "Parameter"
+                ]["Value"]
             ),
         ),
     )
@@ -123,14 +125,29 @@ def measure(
             metrics=AWSLambdaRunner.metrics,
             timeout=evaluation_timeout,
         )
-        for conversation in results:
-            for conversation_traces in conversation.traces:
+        for conversation_measurements in results:
+            # Emit EMF logs for measurements at conversation level:
+            last_trace = conversation_measurements.traces[-1].trace
+            timestamp = int(last_trace.trace_id.timestamp.timestamp() * 1000)
+            for measurement in conversation_measurements.measurements:
+                logger.metric(
+                    measurement,
+                    conversation_id=conversation_measurements.conversation_id,
+                    additional_info=measurement.additional_info,
+                    namespace="GenerativeAIToolkit",
+                    common_dimensions={
+                        "AgentName": AWSLambdaRunner.agent_name,
+                    },
+                    timestamp=timestamp,
+                )
+            # Emit EMF logs for measurements at trace level:
+            for conversation_traces in conversation_measurements.traces:
                 trace = conversation_traces.trace
                 timestamp = int(trace.trace_id.timestamp.timestamp() * 1000)
                 for measurement in conversation_traces.measurements:
                     logger.metric(
                         measurement,
-                        conversation_id=conversation.conversation_id,
+                        conversation_id=conversation_measurements.conversation_id,
                         trace_id=conversation_traces.trace.trace_id,
                         additional_info=measurement.additional_info,
                         namespace="GenerativeAIToolkit",
