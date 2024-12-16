@@ -981,7 +981,11 @@ curl -v \
 
 #### Security: ensuring users access their own conversation history only
 
-You must make sure that users can only set the conversation ID to an ID of one of their own conversations, or they would be able to read conversations from other users (unless you want that of course). To make this work securely with the out-of-the-box `DynamoDbConversationHistory`, you need to set the right auth context on the agent for each conversation with a user. Setting the auth context ensures that each conversation is bound to that auth context. Even if two users would (accidentally or maliciously) use the same conversation ID, the auth context would still limit each user to see his/her own conversations only. This works because the auth context is part of the Amazon DynamoDB key. In the simplest case, you would use the user ID as auth context. For example, if you're using Amazon Cognito, you could use the `sub` claim from the user's access token as auth context.
+You must make sure that users can only set the conversation ID to an ID of one of their own conversations, or they would be able to read conversations from other users (unless you want that of course). To make this work securely with the out-of-the-box `DynamoDbConversationHistory`, you need to set the right auth context on the agent for each conversation with a user.
+
+Setting the auth context ensures that each conversation is bound to that auth context. Even if two users would (accidentally or maliciously) use the same conversation ID, the auth context would still limit each user to see his/her own conversations only. This works because the auth context is part of the Amazon DynamoDB key.
+
+In the simplest case, you would use the user ID as auth context. For example, if you're using Amazon Cognito, you could use the `sub` claim from the user's access token as auth context.
 
 You can set the auth context on a `BedrockConverseAgent` instance like so (and this is propagated to the conversation history instance your agent uses):
 
@@ -991,7 +995,7 @@ agent.set_auth_context("<my-user-id>")
 
 > If you have custom needs, for example you want to allow some users, but not all, to share conversations, you likely need to implement a custom conversation history class to support your auth context scheme (e.g. you could subclass `DynamoDbConversationHistory` and customize the logic).
 
-The deployment of the `BedrockConverseAgent` with AWS Lambda Function URL, explained above, presumes you're wrapping this component inside your architecture in some way, so that it is not actually directly invoked by users (i.e. real users don't use `curl` to invoke the agent as in the example above) but rather by another component in your architecture. As example, let's say you're implementing an architecture where user's client (say an iOS app) connects to a backend-for-frontend API, that is responsible, amongst other things, for ensuring users are properly authenticated. The backend-for-frontend API may then invoke the `BedrockConverseAgent` via the AWS Lambda function URL, passing the (verified) user ID in the HTTP header `x-user-id`:
+The deployment of the `BedrockConverseAgent` with AWS Lambda Function URL, explained above, presumes you're wrapping this component inside your architecture in some way, so that it is not actually directly invoked by users (i.e. real users don't use `curl` to invoke the agent as in the example above) but rather by another component in your architecture. As example, let's say you're implementing an architecture where the user's client (say an iOS app) connects to a backend-for-frontend API, that is responsible, amongst other things, for ensuring users are properly authenticated. The backend-for-frontend API may then invoke the `BedrockConverseAgent` via the AWS Lambda function URL, passing the (verified) user ID in the HTTP header `x-user-id`:
 
 ```mermaid
 flowchart LR
@@ -1002,7 +1006,7 @@ flowchart LR
     A --> B --> C --> D
 ```
 
-In this case, configure the out-of-the-box `UvicornRunner` (from `generative_ai_toolkit.run.agent`) to use the incoming HTTP header `x-user-id` as auth context:
+In this case, configure the `UvicornRunner` (from `generative_ai_toolkit.run.agent`) to use the incoming HTTP header `x-user-id` as auth context:
 
 ```python
 from fastapi import Request
