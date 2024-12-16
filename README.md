@@ -1020,7 +1020,7 @@ UvicornRunner.configure(agent=my_agent, auth_context_fn=extract_x_user_id_from_r
 
 > You would make that change in <a href="./{{ cookiecutter.package_name }}/lib/agent/agent.py">this file of the applied cookiecutter template</a>.
 
-> The `UvicornRunner` uses, by default, the AWS IAM `userId` as auth context. The actual value of this `userId` depends on how you've acquired AWS credentials, e.g. if you've assumed an AWS IAM Role it will simply be the concatenation of your assumed role ID with your chosen session ID. You'll likely want to customize the auth context as explained in this paragraph!
+> The `UvicornRunner` uses, by default, the AWS IAM `userId` as auth context. The actual value of this `userId` depends on how you've acquired AWS credentials to sign the AWS Lambda Function URL request with. For example, if you've assumed an AWS IAM Role it will simply be the concatenation of your assumed role ID with your chosen session ID. You'll likely want to customize the auth context as explained in this paragraph!
 
 ### 2.10 Web UI for Conversation Debugging
 
