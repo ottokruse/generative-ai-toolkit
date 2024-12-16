@@ -922,7 +922,7 @@ After that, you can view the metrics in Amazon CloudWatch metrics, and you have 
 
 <img src="./assets/images/sample-metric.png" alt="Sample Amazon Cloud Metric" width="1200" />
 
-### 2.9 Deploying and Invoking the BedrockConverseAgent
+### 2.9 Deploying and Invoking the `BedrockConverseAgent`
 
 The [Cookiecutter template](#cookiecutter-template) includes an AWS CDK Stack that shows how to deploy this library on AWS Lambda (as per the diagram at the top of this README):
 
@@ -979,6 +979,45 @@ curl -v \
   --aws-sigv4 "aws:amz:$AWS_REGION:lambda"
 ```
 
+#### Security: ensuring users access their own conversation history only
+
+You must make sure that users can only set the conversation ID to an ID of one of their own conversations, or they would be able to read conversations from other users (unless you want that of course). To make this work securely with the out-of-the-box `DynamoDbConversationHistory`, you need to set the right auth context on the agent for each conversation with a user. Setting the auth context ensures that each conversation is bound to that auth context. Even if two users would (accidentally or maliciously) use the same conversation ID, the auth context would still limit each user to see his/her own conversations only. This works because the auth context is part of the Amazon DynamoDB key. In the simplest case, you would use the user ID as auth context. For example, if you're using Amazon Cognito, you could use the `sub` claim from the user's access token as auth context.
+
+You can set the auth context on a `BedrockConverseAgent` instance like so (and this is propagated to the conversation history instance your agent uses):
+
+```python
+agent.set_auth_context("<my-user-id>")
+```
+
+> If you have custom needs, for example you want to allow some users, but not all, to share conversations, you likely need to implement a custom conversation history class to support your auth context scheme (e.g. you could subclass `DynamoDbConversationHistory` and customize the logic).
+
+The deployment of the `BedrockConverseAgent` with AWS Lambda Function URL, explained above, presumes you're wrapping this component inside your architecture in some way, so that it is not actually directly invoked by users (i.e. real users don't use `curl` to invoke the agent as in the example above) but rather by another component in your architecture. As example, let's say you're implementing an architecture where user's client (say an iOS app) connects to a backend-for-frontend API, that is responsible, amongst other things, for ensuring users are properly authenticated. The backend-for-frontend API may then invoke the `BedrockConverseAgent` via the AWS Lambda function URL, passing the (verified) user ID in the HTTP header `x-user-id`:
+
+```mermaid
+flowchart LR
+    A[User]
+    B[iOS app]
+    C["Backend-for-frontend"]
+    D["BedrockConverseAgent exposed via AWS Lambda function URL"]
+    A --> B --> C --> D
+```
+
+In this case, configure the out-of-the-box `UvicornRunner` (from `generative_ai_toolkit.run.agent`) to use the incoming HTTP header `x-user-id` as auth context:
+
+```python
+from fastapi import Request
+from generative_ai_toolkit.run.agent import UvicornRunner
+
+def extract_x_user_id_from_request(request: Request):
+    return request.headers["x-user-id"] # Make sure you can trust this header value!
+
+UvicornRunner.configure(agent=my_agent, auth_context_fn=extract_x_user_id_from_request)
+```
+
+> You would make that change in <a href="./{{ cookiecutter.package_name }}/lib/agent/agent.py">this file of the applied cookiecutter template</a>.
+
+> The `UvicornRunner` uses, by default, the AWS IAM `userId` as auth context. The actual value of this `userId` depends on how you've acquired AWS credentials, e.g. if you've assumed an AWS IAM Role it will simply be the concatenation of your assumed role ID with your chosen session ID. You'll likely want to customize the auth context as explained in this paragraph!
+
 ### 2.10 Web UI for Conversation Debugging
 
 The Generative AI Toolkit provides a local, web-based user interface (UI) to help you inspect and debug conversations, view evaluation results, and analyze agent behavior. This UI is particularly useful during development and testing phases, allowing you to quickly identify issues, review traces, and understand how your agent processes user queries and responds.
@@ -996,11 +1035,11 @@ Below are two example screenshots of the UI in action:
 
 <img src="./assets/images/generative-ai-toolkit-webui-dashboard.png" alt="UI Overview Screenshot" title="UI Overview Screenshot" width="1200"/>
 
-*In this screenshot, you can see multiple conversations along with their metrics and pass/fail status. Clicking on a conversation reveals its detailed traces and metrics.*
+_In this screenshot, you can see multiple conversations along with their metrics and pass/fail status. Clicking on a conversation reveals its detailed traces and metrics._
 
 <img src="./assets/images/generative-ai-toolkit-webui-detail.png" alt="UI Overview Screenshot" title="UI Overview Screenshot" width="1200"/>
 
-*Here, a single conversation’s full trace is displayed. You can see user queries, agent responses, any tool calls made, and evaluation details like latency and cost. This view helps you understand how and why the agent produced its final answer.*
+_Here, a single conversation’s full trace is displayed. You can see user queries, agent responses, any tool calls made, and evaluation details like latency and cost. This view helps you understand how and why the agent produced its final answer._
 
 **How to Launch the UI:**
 
