@@ -4,6 +4,9 @@ The **Generative AI Toolkit** is a lightweight library that covers the life cycl
 
 The Generative AI Toolkit makes it easy to measure and test the performance of LLM-based applications, during development as well as in production. Measurements and test results can be integrated seamlessly with Amazon CloudWatch Metrics.
 
+The toolkit builds upon principles and methodologies detailed in our research paper:  
+**[GENERATIVE AI TOOLKIT- A FRAMEWORK FOR INCREASING THE QUALITY OF LLM-BASED APPLICATIONS OVER THEIR WHOLE LIFE CYCLE](https://arxiv.org/abs/2412.14215)**.
+
 ## Architecture
 
 <img src="./assets/images/architecture.png" alt="Architecture" width="1200" />
