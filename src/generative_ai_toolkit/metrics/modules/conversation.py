@@ -69,7 +69,7 @@ class ConversationExpectationMetric(BaseMetric):
                             "text": textwrap.dedent(
                                 """
                                 You will be given two inputs:
-                                1. Conversation between a car driver and an LLM agent.
+                                1. Conversation between a user and an LLM agent.
                                 2. Developer provided expectations for the LLM agent's responses.
 
                                 You will compare the actual conversation against the provided expectations.
