@@ -47,6 +47,8 @@ export class StreamingAgent extends Construct {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       stream: cdk.aws_dynamodb.StreamViewType.NEW_IMAGE,
       pointInTimeRecovery: true,
+      encryption: cdk.aws_dynamodb.TableEncryption.CUSTOMER_MANAGED,
+      billingMode: cdk.aws_dynamodb.BillingMode.PAY_PER_REQUEST,
     });
     this.table = agentTable;
     agentTable.addGlobalSecondaryIndex({
