@@ -26,34 +26,40 @@ authors = [
 
 [project.optional-dependencies]
 run-agent = [
-    "fastapi~=0.112.0",
-    "uvicorn~=0.30.5",
+    "flask~=3.1.0",
+    "gunicorn~=23.0.0",
+    "pydantic~=2.10.6",
 ]
 evaluate = [
     "nltk~=3.9.1",
     "scikit-learn~=1.5.1",
 ]
 interactive = [
-    "pandas~=2.2.2",
-    "jsonpickle~=3.2.2",
-    "requests~=2.32.3",
+    "flask~=3.1.0",
+    "gunicorn~=23.0.0",
     "itables~=2.1.4",
+    "jsonpickle~=3.2.2",
+    "pandas~=2.2.2",
+    "requests~=2.32.3",
     "tabulate~=0.9.0",
 ]
 dev = [
     "boto3-stubs[bedrock-runtime,dynamodb]~=1.35.2",
 ]
 all = [
-    "fastapi~=0.112.0",
-    "uvicorn~=0.30.5",
-    "nltk~=3.9.1",
-    "scikit-learn~=1.5.1",
-    "pandas~=2.2.2",
-    "jsonpickle~=3.2.2",
-    "requests~=2.32.3",
-    "itables~=2.1.4",
-    "tabulate~=0.9.0",
     "boto3-stubs[bedrock-runtime,dynamodb]~=1.35.2",
+    "fastapi~=0.112.0",
+    "flask~=3.1.0",
+    "gunicorn~=23.0.0",
+    "itables~=2.1.4",
+    "jsonpickle~=3.2.2",
+    "nltk~=3.9.1",
+    "pandas~=2.2.2",
+    "pydantic~=2.10.6",
+    "requests~=2.32.3",
+    "scikit-learn~=1.5.1",
+    "tabulate~=0.9.0",
+    "uvicorn~=0.30.5",
 ]
 
 [tool.setuptools.packages.find]

@@ -19,7 +19,8 @@ WORKDIR /var/task
 # uv
 COPY --from=ghcr.io/astral-sh/uv:0.4.0 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
-    UV_SYSTEM_PYTHON=1
+    UV_SYSTEM_PYTHON=1 \
+    PYTHONUNBUFFERED=1
 
 # install generative_ai_toolkit
 RUN uv pip install "generative_ai_toolkit[run-agent]"
@@ -27,4 +28,4 @@ RUN uv pip install "generative_ai_toolkit[run-agent]"
 # Customize below this line
 COPY *.py ./
 # nosemgrep: dockerfile.security.missing-user.missing-user
-CMD ["python", "agent.py"]
+CMD ["gunicorn", "-b=:8080", "agent:app()"]

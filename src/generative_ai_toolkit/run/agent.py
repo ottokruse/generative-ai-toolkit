@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import json
-import os
 from typing import (
     Callable,
     Iterable,
@@ -21,16 +20,12 @@ from typing import (
     TypedDict,
     Unpack,
 )
+from threading import local
 
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import uvicorn
+from flask import Flask, Request, Response, request
 
 from generative_ai_toolkit.utils.logging import logger
-
-
-app = FastAPI()
 
 
 class Runnable(Protocol):
@@ -50,7 +45,7 @@ AuthContextFn = Callable[[Request], str | None]
 
 
 class RunnerConfig(TypedDict, total=False):
-    agent: Runnable
+    agent: Runnable | Callable[[], Runnable]
     auth_context_fn: AuthContextFn
 
 
@@ -59,22 +54,29 @@ def iam_auth_context_fn(request: Request):
         amzn_request_context = json.loads(request.headers["x-amzn-request-context"])
         return amzn_request_context["authorizer"]["iam"]["userId"]
     except Exception as e:
-        raise Exception("Unable to determine auth context") from e
+        raise Exception("Missing AWS IAM Auth context") from e
 
 
-class _UvicornRunner:
-    _agent: Runnable | None
+class _Runner:
+    _agent: Runnable | Callable[[], Runnable] | None
     _auth_context_fn: AuthContextFn
+    _app: Flask
 
     def __init__(self) -> None:
         self._agent = None
         self._auth_context_fn = iam_auth_context_fn
+        self._thread_local = local()
 
     @property
     def agent(self) -> Runnable:
         if not self._agent:
             raise ValueError("Agent not configured yet")
-        return self._agent
+        if not callable(self._agent):
+            return self._agent
+        # Agent instances are not (expected to be) thread safe, so each thread must have it's own one
+        if not hasattr(self._thread_local, "agent"):
+            self._thread_local.agent = self._agent()
+        return self._thread_local.agent
 
     @property
     def auth_context_fn(self) -> AuthContextFn:
@@ -91,49 +93,71 @@ class _UvicornRunner:
                 raise ValueError("auth_context_fn must be callable")
             self._auth_context_fn = kwargs["auth_context_fn"]
 
-    def __call__(self):
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
-            port=int(os.environ.get("PORT") or "8080"),
-            timeout_keep_alive=300,
-        )
+    @property
+    def app(self):
+        app = Flask(__name__)
+
+        @app.get("/")
+        def health():
+            return "Up and running! To chat with the agent, use HTTP POST"
+
+        class Body(BaseModel):
+            user_input: str = Field(
+                description="The input from the user to the agent", min_length=1
+            )
+
+        @app.post("/")
+        def index():
+            agent = self.agent
+
+            try:
+                auth_context = self.auth_context_fn(request)
+                agent.set_auth_context(auth_context)
+            except Exception as err:
+                logger.warn(f"Forbidden: {err}")
+                return Response("Forbidden", status=403)
+
+            try:
+                body = Body.model_validate_json(request.data)
+            except Exception as err:
+                logger.info(f"Unprocessable entity: {err}")
+                return Response("Unprocessable entity", status=422)
+
+            x_conversation_id = request.headers.get("x-conversation-id")
+            if x_conversation_id:
+                agent.set_conversation_id(x_conversation_id)
+            else:
+                agent.reset()
+
+            # Explicitly consume the first chunk so any obvious errors bubble up
+            # before we return status 200 below
+            chunks = agent.converse_stream(body.user_input)
+            first_chunk = next(iter(chunks))
+
+            def chunked_response():
+                try:
+                    yield first_chunk
+                    yield from chunks
+                except Exception:
+                    logger.exception()
+                    yield "Internal Server Error\n"
+
+            return Response(
+                chunked_response(),
+                status=200,
+                content_type="text/plain",
+                headers={
+                    "x-conversation-id": agent.conversation_id,
+                    "transfer-encoding": "chunked",
+                },
+            )
+
+        @app.errorhandler(Exception)
+        def error(error):
+            logger.exception()
+            return "Internal Server Error", 500
+
+        return app
 
 
-UvicornRunner = _UvicornRunner()
-
-
-class Body(BaseModel):
-    user_input: str = Field(
-        description="The input from the user to the agent", min_length=1
-    )
-
-
-@app.get("/")
-async def health():
-    return "Up and running! To chat with the agent, use HTTP POST"
-
-
-@app.post("/")
-async def index(
-    body: Body,
-    request: Request,
-):
-    agent = UvicornRunner.agent
-    try:
-        auth_context = UvicornRunner.auth_context_fn(request)
-        agent.set_auth_context(auth_context)
-    except Exception:
-        logger.exception()
-        return StreamingResponse("Forbidden", status_code=403)
-
-    x_conversation_id = request.headers.get("x-conversation-id")
-    if x_conversation_id:
-        agent.set_conversation_id(x_conversation_id)
-    else:
-        agent.reset()
-    return StreamingResponse(
-        agent.converse_stream(body.user_input),
-        media_type="text/event-stream",
-        headers={"x-conversation-id": agent.conversation_id},
-    )
+Runner = _Runner()

@@ -21,7 +21,7 @@ import boto3.session
 from generative_ai_toolkit.agent import BedrockConverseAgent
 from generative_ai_toolkit.conversation_history import DynamoDbConversationHistory
 from generative_ai_toolkit.tracer import DynamoDbAgentTracer
-from generative_ai_toolkit.run.agent import UvicornRunner
+from generative_ai_toolkit.run.agent import Runner
 
 
 class {{ cookiecutter.agent_name }}(BedrockConverseAgent):
@@ -48,7 +48,7 @@ class {{ cookiecutter.agent_name }}(BedrockConverseAgent):
         return super().converse_stream(augmented_context, tools)
 
 
-def run():
+def app():
     # Create agent
     session = boto3.session.Session(region_name=os.environ["AWS_REGION"])
     dynamodb_conversation_history = DynamoDbConversationHistory(
@@ -63,10 +63,7 @@ def run():
         session=session,
     )
 
-    # Run agent
-    UvicornRunner.configure(agent=agent)
-    UvicornRunner()
+    # Configure runner with agent
+    Runner.configure(agent=agent)
 
-
-if __name__ == "__main__":
-    run()
+    return Runner.app

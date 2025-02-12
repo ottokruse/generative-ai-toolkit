@@ -1011,21 +1011,21 @@ flowchart LR
     A --> B --> C --> D
 ```
 
-In this case, configure the `UvicornRunner` (from `generative_ai_toolkit.run.agent`) to use the incoming HTTP header `x-user-id` as auth context:
+In this case, configure the `Runner` (from `generative_ai_toolkit.run.agent`) to use the incoming HTTP header `x-user-id` as auth context:
 
 ```python
 from fastapi import Request
-from generative_ai_toolkit.run.agent import UvicornRunner
+from generative_ai_toolkit.run.agent import Runner
 
 def extract_x_user_id_from_request(request: Request):
     return request.headers["x-user-id"] # Make sure you can trust this header value!
 
-UvicornRunner.configure(agent=my_agent, auth_context_fn=extract_x_user_id_from_request)
+Runner.configure(agent=my_agent, auth_context_fn=extract_x_user_id_from_request)
 ```
 
 > You would make that change in <a href="./{{ cookiecutter.package_name }}/lib/agent/agent.py">this file of the applied cookiecutter template</a>.
 
-> The `UvicornRunner` uses, by default, the AWS IAM `userId` as auth context. The actual value of this `userId` depends on how you've acquired AWS credentials to sign the AWS Lambda Function URL request with. For example, if you've assumed an AWS IAM Role it will simply be the concatenation of your assumed role ID with your chosen session ID. You'll likely want to customize the auth context as explained in this paragraph!
+> The `Runner` uses, by default, the AWS IAM `userId` as auth context. The actual value of this `userId` depends on how you've acquired AWS credentials to sign the AWS Lambda Function URL request with. For example, if you've assumed an AWS IAM Role it will simply be the concatenation of your assumed role ID with your chosen session ID. You'll likely want to customize the auth context as explained in this paragraph!
 
 ### 2.10 Web UI for Conversation Debugging
 

@@ -101,6 +101,11 @@ export class StreamingAgent extends Construct {
             )}.Arn>/index/*`,
           ],
         },
+        {
+          id: "AwsSolutions-IAM5",
+          reason: "These KMS permissions have a *-suffix which is acceptable",
+          appliesTo: ["Action::kms:GenerateDataKey*", "Action::kms:ReEncrypt*"],
+        },
       ],
       true
     );

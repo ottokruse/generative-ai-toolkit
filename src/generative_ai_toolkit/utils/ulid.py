@@ -15,7 +15,7 @@
 from datetime import datetime, timezone
 from functools import cached_property
 import time
-import random
+import secrets
 
 
 class Ulid:
@@ -80,7 +80,7 @@ class Ulid:
     @classmethod
     def _generate(cls):
         timestamp = int(time.time() * 1000)
-        randomness = random.getrandbits(80)
+        randomness = secrets.randbits(80)
         timestamp_encoded = cls._encode_base32(timestamp, cls.TIMESTAMP_LENGTH)
         randomness_encoded = cls._encode_base32(randomness, cls.RANDOMNESS_LENGTH)
         ulid = timestamp_encoded + randomness_encoded

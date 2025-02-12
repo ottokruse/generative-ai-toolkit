@@ -89,6 +89,7 @@ class InMemoryConversationHistory(ConversationHistory):
 
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
+        self._message_cache[self._auth_context].setdefault(self._conversation_id, [])
 
     @property
     def auth_context(self) -> str | None:
@@ -96,6 +97,7 @@ class InMemoryConversationHistory(ConversationHistory):
 
     def set_auth_context(self, auth_context: str | None):
         self._auth_context = auth_context
+        self._message_cache.setdefault(auth_context, {})
 
     def add_message(self, msg: Message) -> None:
         self._message_cache[self._auth_context][self._conversation_id].append(msg)
@@ -112,7 +114,6 @@ class InMemoryConversationHistory(ConversationHistory):
 class DynamoDbConversationHistory(ConversationHistory):
     _conversation_id: str
     _auth_context: str | None
-    _message_cache: list[Message] | None
 
     def __init__(
         self,
@@ -122,7 +123,6 @@ class DynamoDbConversationHistory(ConversationHistory):
         self.table = (session or boto3).resource("dynamodb").Table(table_name)
         self._conversation_id = Ulid().ulid
         self._auth_context = None
-        self._message_cache = None
 
     @property
     def conversation_id(self) -> str:
@@ -130,7 +130,6 @@ class DynamoDbConversationHistory(ConversationHistory):
 
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
-        self._message_cache = None
 
     @property
     def auth_context(self) -> str | None:
@@ -138,34 +137,33 @@ class DynamoDbConversationHistory(ConversationHistory):
 
     def set_auth_context(self, auth_context: str | None):
         self._auth_context = auth_context
-        self._message_cache = None
 
     def add_message(self, msg: Message) -> None:
+        item = {
+            "pk": f"CONV#{self._auth_context or "_"}#{self.conversation_id}",
+            "sk": f"MSG#{str(len(self.messages) + 1).zfill(3)}",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "conversation_id": self.conversation_id,
+            "msg_nr": len(self.messages) + 1,
+            "role": msg["role"],
+            "content": DynamoDbMapper.to_dynamo(msg["content"]),
+            "auth_context": self._auth_context,
+        }
         try:
             self.table.put_item(
-                Item={
-                    "pk": f"CONV#{self._auth_context or "_"}#{self.conversation_id}",
-                    "sk": f"MSG#{str(len(self.messages) + 1).zfill(3)}",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "conversation_id": self.conversation_id,
-                    "msg_nr": len(self.messages) + 1,
-                    "role": msg["role"],
-                    "content": DynamoDbMapper.to_dynamo(msg["content"]),
-                    "auth_context": self._auth_context,
-                },
+                Item=item,
                 ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
             )
-            if not self._message_cache:
-                self._message_cache = []
-            self._message_cache.append(msg)
+        except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
+            raise ValueError(
+                f"The message with pk {item['pk']} and sk {item['sk']} already exists!"
+            ) from e
         except self.table.meta.client.exceptions.ResourceNotFoundException as e:
             raise ValueError(f"Table {self.table.name} does not exist") from e
 
     @property
     def messages(self) -> Sequence[Message]:
-        if self._message_cache is not None:
-            return self._message_cache
-        self._message_cache = []
+        collected = []
         last_evaluated_key_param: dict[str, Any] = {}
         while True:
             try:
@@ -179,7 +177,7 @@ class DynamoDbConversationHistory(ConversationHistory):
                 )
             except self.table.meta.client.exceptions.ResourceNotFoundException as e:
                 raise ValueError(f"Table {self.table.name} does not exist") from e
-            self._message_cache.extend(
+            collected.extend(
                 [
                     Message(
                         role=item["role"],
@@ -189,11 +187,10 @@ class DynamoDbConversationHistory(ConversationHistory):
                 ]
             )
             if "LastEvaluatedKey" not in response:
-                return self._message_cache
+                return collected
             last_evaluated_key_param = {
                 "ExclusiveStartKey": response["LastEvaluatedKey"]
             }
 
     def reset(self) -> None:
         self._conversation_id = Ulid().ulid
-        self._message_cache = None
