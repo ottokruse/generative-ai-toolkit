@@ -159,5 +159,14 @@ class _Runner:
 
         return app
 
+    def __call__(self):
+        """
+        Making the runner callable makes it easy to use the Runner object directly,
+        when launching e.g. gunicorn from the CLI:
+
+        gunicorn path.to.myagent:Runner()
+        """
+        return self.app
+
 
 Runner = _Runner()
