@@ -984,6 +984,50 @@ curl -v \
   --aws-sigv4 "aws:amz:$AWS_REGION:lambda"
 ```
 
+#### Deployments outside AWS Lambda e.g. containerized as a pod on EKS
+
+The `Runner` is a WSGI application and can be run with any compatible server, such as `gunicorn`.
+
+To support concurrency, make sure you pass an Agent factory to the Runner configuration, and not an Agent instance. Agent instances do not support concurrency and are meant to handle one request at a time. The same is true for Conversation History, pass a factory to your agent, not an instance.
+
+For example:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.conversation_history import DynamoDbConversationHistory
+from generative_ai_toolkit.run.agent import Runner
+
+
+class MyAgent(BedrockConverseAgent):
+    def __init__(self):
+        super().__init__(
+            model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+            system_prompt="You are a helpful assistant",
+            # Conversation History factory:
+            conversation_history=lambda: DynamoDbConversationHistory(
+                table_name="traces"
+            ),
+        )
+
+
+Runner.configure(
+    agent=MyAgent,  # Agent factory
+    auth_context_fn=lambda _: "TestUser",  # Add your own implementation here! See "Security" section below.
+)
+```
+
+If the above file would be e.g. on path `/path/to/agent.py`, then you can run it with `gunicorn` like so:
+
+```shell
+gunicorn "path.to.agent:Runner()"
+```
+
+Make sure to tune concurrency. By default `gunicorn` runs with 1 worker (process) and 1 thread. To e.g. support 20 concurrent conversations, you could run with 4 workers and 5 threads per worker:
+
+```shell
+gunicorn --workers 4 --threads 5 "path.to.agent:Runner()"
+```
+
 #### Security: ensuring users access their own conversation history only
 
 You must make sure that users can only set the conversation ID to an ID of one of their own conversations, or they would be able to read conversations from other users (unless you want that of course). To make this work securely with the out-of-the-box `DynamoDbConversationHistory`, you need to set the right auth context on the agent for each conversation with a user.
