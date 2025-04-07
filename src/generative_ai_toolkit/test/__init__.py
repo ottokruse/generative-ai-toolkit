@@ -573,37 +573,41 @@ class Expect:
             raise ValueError("traces must not be an empty list")
         self.traces = traces
 
-    def _to_equal(self, a, b):
-        assert a == b, f"{a} != {b}"
-
     @property
     def user_input(self):
+        """
+        Make assertions about the user input.
+        """
+
         user_inputs = [
             trace.attributes["ai.user.input"]
             for trace in self.traces
             if "ai.user.input" in trace.attributes
         ]
-        assert user_inputs, "None of the traces have the attribute 'ai.user.input'"
         return _StringAssertor(user_inputs)
 
     @property
     def agent_text_response(self):
+        """
+        Make assertions about the agent's response
+        """
+
         agent_text_responses = [
             trace.attributes["ai.agent.response"]
             for trace in self.traces
             if "ai.agent.response" in trace.attributes
         ]
-        assert (
-            agent_text_responses
-        ), "None of the traces have the attribute 'ai.agent.response'"
         return _StringAssertor(agent_text_responses)
 
     @property
     def tool_invocations(self):
+        """
+        Make assertions about tool invocations (traces with the attribute "ai.tool.name")
+        """
+
         tool_traces = [
-            trace for trace in self.traces if "ai.tool.use.id" in trace.attributes
+            trace for trace in self.traces if "ai.tool.name" in trace.attributes
         ]
-        assert tool_traces, "None of the traces have the attribute 'ai.tool.use.id'"
         return _ToolAssertor(tool_traces)
 
 
@@ -616,7 +620,7 @@ class _StringAssertor:
     def __init__(self, base_values: str | Sequence[str], at=-1) -> None:
         self.base_values = [base_values] if type(base_values) is str else base_values
         self._at = at
-        self.base_value = self.base_values[at]
+        self.base_value = self.base_values[at] if self.base_values else ""
 
     def at(self, index: int) -> "_StringAssertor":
         return _StringAssertor(self.base_values, index)
@@ -632,15 +636,26 @@ class _StringAssertor:
     def to_not_include(self, value: str) -> None:
         assert value not in self.base_value, f"'{self.base_value}' includes '{value}'"
 
-    def to_have_length(self, length=1):
+    def to_have_length(self, length: int | None = None):
+        expected_txt = length if length is not None else "of at least 1"
         assert (
-            len(self.base_value) >= length
-        ), f"Expected '{self.base_value}' to have at least length {length}, but it has length {len(self.base_value)}"
+            len(self.base_value) == length
+            if length is not None
+            else len(self.base_value) > 0
+        ), f"Expected '{self.base_value}' to have length {expected_txt}, but it has length {len(self.base_value)}"
 
 
 class _ToolAssertor:
     def __init__(self, tool_traces: Sequence[Trace]) -> None:
         self.tool_traces = tool_traces
+
+    def to_have_length(self, length: int | None = None):
+        expected_txt = length if length is not None else "at least one"
+        assert (
+            len(self.tool_traces) == length
+            if length is not None
+            else len(self.tool_traces) > 0
+        ), f"Expected {expected_txt} tool invocation(s), but encountered {len(self.tool_traces)}"
 
     def to_include(self, tool_name: str, *, with_error: bool | None | str = False):
         tool_invocations = [
@@ -666,6 +681,11 @@ class _ToolAssertor:
             if any(errors):
                 raise AssertionError(f"Tool {tool_name} raised an error: {errors[0]}")
         return _ToolInputOutputAssertor(tool_invocations)
+
+    def to_not_include(self, tool_name: str):
+        for trace in self.tool_traces:
+            if trace.attributes["ai.tool.name"] == tool_name:
+                raise AssertionError(f"Tool {tool_name} was invoked")
 
 
 class _ToolInputOutputAssertor:
