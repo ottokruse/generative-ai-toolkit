@@ -13,16 +13,15 @@
 # limitations under the License.
 
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
-from generative_ai_toolkit.tracer import LlmTrace
 
 
 class TokensMetric(BaseMetric):
     def evaluate_trace(self, trace, **kwargs):
-        if not isinstance(trace, LlmTrace):
+        if trace.attributes.get("ai.trace.type") != "llm-invocation":
             return
 
-        input_tokens = trace.response["usage"]["inputTokens"]
-        output_tokens = trace.response["usage"]["outputTokens"]
+        input_tokens = trace.attributes["ai.llm.response.usage"]["inputTokens"]
+        output_tokens = trace.attributes["ai.llm.response.usage"]["outputTokens"]
 
         return [
             Measurement(

@@ -36,7 +36,7 @@ from generative_ai_toolkit.test import (
     CaseTraceInfo,
     PassFail,
 )
-from generative_ai_toolkit.tracer import InMemoryAgentTracer, Trace
+from generative_ai_toolkit.tracer import InMemoryTracer, Trace
 from generative_ai_toolkit.utils.logging import logger
 from generative_ai_toolkit.metrics import Measurement
 from generative_ai_toolkit.utils.ulid import Ulid
@@ -265,7 +265,7 @@ class GenerativeAIToolkit:
             val.values if isinstance(val, Permute) else [val]
             for val in agent_parameters.values()
         ]
-        default_agent_parameters = dict(tracer=InMemoryAgentTracer())
+        default_agent_parameters = dict(tracer=lambda: InMemoryTracer())
         with ThreadPoolExecutor(
             max_workers=max_case_workers or GenerativeAIToolkit.max_case_workers,
             thread_name_prefix="case",
@@ -276,7 +276,9 @@ class GenerativeAIToolkit:
                 for combination in itertools.product(*values)
             ]
             for case_nr, case in enumerate(cases):
-                for parameter_permutation in parameter_permutations:
+                for permutation_nr, parameter_permutation in enumerate(
+                    parameter_permutations
+                ):
                     current_permutation = {
                         k: parameter_permutation[k]
                         for k, v in agent_parameters.items()
@@ -290,6 +292,7 @@ class GenerativeAIToolkit:
                             case_nr=case_nr,
                             run_nr=run_nr,
                             permutation=current_permutation,
+                            permutation_nr=permutation_nr,
                         )
                         futures[
                             executor.submit(
@@ -305,7 +308,7 @@ class GenerativeAIToolkit:
             for future in as_completed(futures):
                 info = futures[future]
                 print(
-                    f"Done generating traces for case {info.case_nr} run {info.run_nr}"
+                    f"Done generating traces for case {info.case_nr} run {info.run_nr} permutation {info.permutation_nr}"
                 )
                 yield future.result()
 
@@ -323,10 +326,10 @@ def get_conversation_metadata(traces: Sequence["Trace"]):
     case_: Case | None = None
     for trace in traces:
         if not conversation_id:
-            conversation_id = trace.conversation_id
-        elif conversation_id != trace.conversation_id:
+            conversation_id = trace.attributes["ai.conversation.id"]
+        elif conversation_id != trace.attributes["ai.conversation.id"]:
             raise ValueError(
-                f"Found multiple Conversation IDs in traces: {conversation_id} and {trace.conversation_id}"
+                f"Found multiple Conversation IDs in traces: {conversation_id} and {trace.attributes["ai.conversation.id"]}"
             )
         if isinstance(trace, CaseTrace):
             if not case_:

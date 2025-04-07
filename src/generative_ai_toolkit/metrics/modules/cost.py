@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
-from generative_ai_toolkit.tracer import LlmTrace
 
 
 class CostMetric(BaseMetric):
@@ -24,7 +23,7 @@ class CostMetric(BaseMetric):
     This metric calculates the cost based on the number of input and output tokens used by the model.
     """
 
-    def __init__(self, pricing_config, cost_threshold=None, cost_comparator="<="):
+    def __init__(self, pricing_config, cost_threshold=None):
         """
         Initialize the CostMetric with pricing configuration and optional cost threshold.
 
@@ -34,7 +33,7 @@ class CostMetric(BaseMetric):
         """
         super().__init__()
         self.pricing_config = pricing_config
-        self.cost = None
+        self.cost_threshold = cost_threshold
 
     def evaluate_trace(self, trace, **kwargs):
         """
@@ -49,37 +48,35 @@ class CostMetric(BaseMetric):
         :return: A dictionary with the evaluation results including cost, cost threshold, comparator, and cost difference.
         """
 
-        if not isinstance(trace, LlmTrace):
+        if trace.attributes.get("ai.trace.type") != "llm-invocation":
             return
 
-        try:
-            input_tokens = trace.response["usage"]["inputTokens"]
-            output_tokens = trace.response["usage"]["outputTokens"]
-            model_id = trace.request["modelId"]
+        input_tokens = trace.attributes["ai.llm.response.usage"]["inputTokens"]
+        output_tokens = trace.attributes["ai.llm.response.usage"]["outputTokens"]
+        model_id = trace.attributes["ai.llm.request.model.id"]
 
-            # Calculate cost based on tokens used and pricing configuration
-            per_token = self.pricing_config[model_id]["per_token"]
-            input_cost = (Decimal(input_tokens) / Decimal(per_token)) * Decimal(
-                self.pricing_config[model_id]["input_cost"]
-            )
-            output_cost = (Decimal(output_tokens) / Decimal(per_token)) * Decimal(
-                self.pricing_config[model_id]["output_cost"]
-            )
+        # Calculate cost based on tokens used and pricing configuration
+        per_token = self.pricing_config[model_id]["per_token"]
+        input_cost = (Decimal(input_tokens) / Decimal(per_token)) * Decimal(
+            self.pricing_config[model_id]["input_cost"]
+        )
+        output_cost = (Decimal(output_tokens) / Decimal(per_token)) * Decimal(
+            self.pricing_config[model_id]["output_cost"]
+        )
 
-            input_cost = input_cost.quantize(
-                Decimal(".00000001"), rounding=ROUND_HALF_UP
-            )
-            output_cost = output_cost.quantize(
-                Decimal(".00000001"), rounding=ROUND_HALF_UP
-            )
+        cost = float(input_cost + output_cost)
 
-            self.cost = input_cost + output_cost
-
-            return Measurement(
-                name="Cost",
-                value=float(self.cost),
-                validation_passed=True if self.cost < 0.5 else False,
-            )
-
-        except Exception as e:
-            print(f"Error in cost calculation: {e}")
+        return Measurement(
+            name="Cost",
+            value=cost,
+            validation_passed=(
+                None if self.cost_threshold is None else cost <= self.cost_threshold
+            ),
+            additional_info={
+                "cost_threshold": self.cost_threshold,
+                "cost": cost,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "per_token": per_token,
+            },
+        )

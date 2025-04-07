@@ -13,18 +13,12 @@
 # limitations under the License.
 
 from generative_ai_toolkit.metrics import BaseMetric, Measurement, Unit
-from generative_ai_toolkit.tracer import ToolTrace, LlmTrace
+from generative_ai_toolkit.utils.logging import logger
 
 
 class LatencyMetric(BaseMetric):
     """
-    LatencyMetric class for measuring the latency of model invocations.
-
-    This metric measures the time taken for a provided callback to execute and stores
-    the latency in milliseconds.
-
-    Attributes:
-        latency: The measured latency in milliseconds.
+    LatencyMetric class for measuring the latency of model invocations and other actions the agent takes.
     """
 
     def evaluate_trace(self, trace, **kwargs):
@@ -34,20 +28,26 @@ class LatencyMetric(BaseMetric):
         :return: A dictionary with the latency result in milliseconds.
         """
 
-        dimensions = [{"To": trace.to}]
-        if isinstance(trace, ToolTrace):
-            dimensions.append({"ToolName": trace.request["tool_name"]})
-
-        latency_value = int(
-            trace.response["metrics"]["latencyMs"]
-            if isinstance(trace, LlmTrace)
-            else trace.response["latency_ms"]
-        )
+        dimensions = []
+        trace_type = trace.attributes.get("ai.trace.type")
+        if trace_type == "tool-invocation":
+            dimensions.append({"ToolName": trace.attributes["ai.tool.name"]})
+        elif trace_type == "llm-invocation":
+            dimensions.append(
+                {"ModelName": trace.attributes["ai.llm.request.model.id"]}
+            )
+        elif trace_type == "conversation-history-list":
+            dimensions.append({"ConversationHistory": "list-messages"})
+        elif trace_type == "conversation-history-add":
+            dimensions.append({"ConversationHistory": "add-message"})
+        elif trace_type == "converse" or trace_type == "converse-stream":
+            dimensions.append({"Converse": trace_type})
+        else:
+            logger.warn("Unknown trace type", trace_type=trace_type)
 
         return Measurement(
             name="Latency",
-            value=latency_value,
+            value=trace.duration_ms,
             unit=Unit.Milliseconds,
             dimensions=dimensions,
-            validation_passed=True if latency_value < 12000 else False,
         )

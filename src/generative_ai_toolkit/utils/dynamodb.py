@@ -38,4 +38,6 @@ class DynamoDbMapper(json.JSONEncoder):
 
     @classmethod
     def from_dynamo(cls, data: Any) -> Any:
-        return json.loads(json.dumps(data, cls=cls))
+        return json.loads(
+            json.dumps(data, cls=cls),
+        )

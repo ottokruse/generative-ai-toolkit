@@ -15,7 +15,7 @@
 import boto3
 
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
-from generative_ai_toolkit.tracer import LlmTrace
+from generative_ai_toolkit.test import user_conversation_from_trace
 
 
 class SentimentMetric(BaseMetric):
@@ -35,7 +35,7 @@ class SentimentMetric(BaseMetric):
         super().__init__()
         self.comprehend_client = boto3.client("comprehend")
 
-    def evaluate_trace(self, trace, **kwargs) -> Measurement | None:
+    def evaluate_conversation(self, conversation_traces, **kwargs):
         """
         Evaluate the trace for sentiment using Amazon Comprehend.
 
@@ -56,18 +56,23 @@ class SentimentMetric(BaseMetric):
             Exception: If an error occurs during the evaluation, it prints an error message.
         """
 
-        if not isinstance(trace, LlmTrace):
-            return None
+        for trace in reversed(conversation_traces):
+            if trace.attributes.get("ai.trace.type") == "llm-invocation":
+                break
+        else:
+            return
+
+        user_conversation = user_conversation_from_trace(trace)
 
         # The last message from the user:
         user_messages = [
-            msg["text"] for msg in trace.user_conversation if msg["role"] == "user"
+            msg["text"] for msg in user_conversation if msg["role"] == "user"
         ]
         last_user_message = user_messages[-1]
 
         # The last message from the agent:
         agent_messages = [
-            msg["text"] for msg in trace.user_conversation if msg["role"] == "assistant"
+            msg["text"] for msg in user_conversation if msg["role"] == "assistant"
         ]
         last_agent_message = agent_messages[-1]
 

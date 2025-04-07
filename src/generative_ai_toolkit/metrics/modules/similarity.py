@@ -21,7 +21,7 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
-from generative_ai_toolkit.test import Case, LlmCaseTrace
+from generative_ai_toolkit.test import Case, CaseTrace, user_conversation_from_trace
 
 
 class AgentResponseSimilarityMetric(BaseMetric):
@@ -60,9 +60,8 @@ class AgentResponseSimilarityMetric(BaseMetric):
                     self.expected_embeddings[case].append(
                         [future.result() for future in turn]
                     )
-                assert (
-                    len(self.expected_embeddings[case])
-                    == len(case.expected_agent_responses_per_turn)
+                assert len(self.expected_embeddings[case]) == len(
+                    case.expected_agent_responses_per_turn
                 ), f"{len(self.expected_embeddings[case])} != {len(case.expected_agent_responses_per_turn)}"
 
     def get_embedding(self, text: str):
@@ -76,21 +75,25 @@ class AgentResponseSimilarityMetric(BaseMetric):
         return np.array(response_body["embedding"]).reshape(1, -1)
 
     def evaluate_conversation(self, conversation_traces, **kwargs):
-        trace = conversation_traces[
-            -1
-        ]  # Use the conversation as captured in the last trace
-        if not isinstance(trace, LlmCaseTrace):
+        for trace in reversed(conversation_traces):
+            if not isinstance(trace, CaseTrace):
+                continue
+            if trace.attributes.get("ai.trace.type") == "llm-invocation":
+                break
+        else:
             return
 
         case = trace.case
         if not case.expected_agent_responses_per_turn:
             return
 
+        user_conversation = user_conversation_from_trace(trace)
+
         self.prepare(case)
 
         min_similarity = 1
         actual_responses = [
-            msg["text"] for msg in trace.user_conversation if msg["role"] == "assistant"
+            msg["text"] for msg in user_conversation if msg["role"] == "assistant"
         ]
 
         for index, turn in enumerate(self.expected_embeddings[case]):

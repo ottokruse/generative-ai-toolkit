@@ -12,15 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from datetime import datetime
 import textwrap
 from typing import (
     Any,
     Callable,
     Iterable,
+    Literal,
     Mapping,
     Protocol,
     Sequence,
+    TypedDict,
     cast,
     runtime_checkable,
 )
@@ -30,9 +33,7 @@ import boto3
 
 from generative_ai_toolkit.tracer.tracer import (
     Trace,
-    LlmTrace,
-    ToolTrace,
-    user_conversation_from_messages,
+    TraceScope,
 )
 from generative_ai_toolkit.metrics.measurement import Measurement
 from generative_ai_toolkit.agent import Tool
@@ -40,33 +41,44 @@ from generative_ai_toolkit.utils.llm_response import get_text, NonStreamingRespo
 from generative_ai_toolkit.utils.typings import Message
 
 
-@dataclass(kw_only=True, frozen=True, repr=False)
-class LlmCaseTrace(LlmTrace):
+class CaseTrace(Trace):
     case: "Case"
     case_nr: int
     run_nr: int
     permutation: Mapping[str, Any] | None
 
-    def __repr__(self) -> str:
-        return repr_case_trace(self)
-
-
-@dataclass(kw_only=True, frozen=True, repr=False)
-class ToolCaseTrace(ToolTrace):
-    case: "Case"
-    case_nr: int
-    run_nr: int
-    permutation: Mapping[str, Any] | None
-
-    def __repr__(self) -> str:
-        return repr_case_trace(self)
-
-
-CaseTrace = LlmCaseTrace | ToolCaseTrace
-
-
-def repr_case_trace(trace: CaseTrace) -> str:
-    return f"CaseTrace(to={trace.to}, conversation_id={trace.conversation_id}, trace_id={trace.trace_id}), case_name={trace.case.name}, case_nr={trace.case_nr}, run_nr={trace.run_nr})"
+    def __init__(
+        self,
+        span_name: str,
+        *,
+        scope: TraceScope,
+        case: "Case",
+        case_nr: int,
+        run_nr: int,
+        permutation: Mapping[str, Any] | None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+        parent_span: "Trace | None" = None,
+        started_at: datetime | None = None,
+        ended_at: datetime | None = None,
+        attributes: dict[str, Any] | None = None,
+        resource_attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            span_name=span_name,
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span=parent_span,
+            started_at=started_at,
+            ended_at=ended_at,
+            attributes=attributes,
+            scope=scope,
+            resource_attributes=resource_attributes,
+        )
+        self.case = case
+        self.case_nr = case_nr
+        self.run_nr = run_nr
+        self.permutation = permutation
 
 
 class _AgentLike(Protocol):
@@ -105,6 +117,7 @@ class CaseTraceInfo:
     case_nr: int = 0
     run_nr: int = 0
     permutation: Mapping[str, Any] | None = None
+    permutation_nr: int = 0
 
 
 ValidatorFunc = Callable[[Sequence[CaseTrace]], str | Sequence[str] | None]
@@ -120,15 +133,20 @@ class Case:
 
     def __init__(
         self,
-        name: str,
+        user_inputs: str | Sequence[str] | None = None,
         *,
-        user_inputs: Sequence[str] | None = None,
+        name: str | None = None,
         user_input_producer: Callable[[Sequence[Message]], str] | None = None,
         overall_expectations: str | None = None,
         converse_kwargs: Mapping | None = None,
         validate: ValidatorFunc | Sequence[ValidatorFunc] | None = None,
     ) -> None:
-        self._user_inputs = list(user_inputs) if user_inputs is not None else []
+        if not user_inputs:
+            self._user_inputs = []
+        elif type(user_inputs) is str:
+            self._user_inputs = [user_inputs]
+        else:
+            self._user_inputs = list(user_inputs)
         self.user_input_producer = user_input_producer
         self.overall_expectations = overall_expectations
         self.expected_agent_responses_per_turn = []
@@ -137,29 +155,28 @@ class Case:
         self.name = name
 
     def __repr__(self) -> str:
-        return f'Case(name="{self.name}",user_inputs={self._user_inputs})'
+        return f"Case(name={repr(self.name)},user_inputs={self._user_inputs})"
 
     def as_case_trace(
         self, trace: Trace, case_trace_info: CaseTraceInfo | None = None
     ) -> CaseTrace:
         if case_trace_info is None:
             case_trace_info = CaseTraceInfo()
-        if isinstance(trace, LlmTrace):
-            return LlmCaseTrace(
-                **asdict(trace),
-                case=self,
-                case_nr=case_trace_info.case_nr,
-                run_nr=case_trace_info.run_nr,
-                permutation=case_trace_info.permutation,
-            )
-        elif isinstance(trace, ToolTrace):
-            return ToolCaseTrace(
-                **asdict(trace),
-                case=self,
-                case_nr=case_trace_info.case_nr,
-                run_nr=case_trace_info.run_nr,
-                permutation=case_trace_info.permutation,
-            )
+        return CaseTrace(
+            span_name=trace.span_name,
+            trace_id=trace.trace_id,
+            span_id=trace.span_id,
+            parent_span=trace.parent_span,
+            started_at=trace.started_at,
+            ended_at=trace.ended_at,
+            attributes=dict(trace.attributes),
+            scope=trace.scope,
+            resource_attributes=trace.resource_attributes,
+            case=self,
+            case_nr=case_trace_info.case_nr,
+            run_nr=case_trace_info.run_nr,
+            permutation=case_trace_info.permutation,
+        )
 
     def run(
         self,
@@ -312,6 +329,41 @@ def case(
         )
 
     return decorator
+
+
+class ConversationMessage(TypedDict):
+    role: Literal["user", "assistant"]
+    text: str
+
+
+def user_conversation_from_trace(trace: Trace):
+    if trace.attributes.get("ai.trace.type") != "llm-invocation":
+        raise ValueError("Trace did not capture an LLM invocation")
+    return user_conversation_from_messages(
+        (
+            *trace.attributes["ai.llm.request.messages"],
+            trace.attributes["ai.llm.response.output"]["message"],
+        )
+    )
+
+
+def user_conversation_from_messages(messages: Iterable[Message]):
+    user_conversation: list[ConversationMessage] = []
+
+    for msg in messages:
+        texts: list[str] = []
+        for part in msg["content"]:
+            if "text" not in part:
+                continue
+            texts.append(part["text"])
+        if texts:
+            text = "\n".join(texts)
+            if user_conversation and user_conversation[-1]["role"] == msg["role"]:
+                user_conversation[-1]["text"] += "\n" + text
+            else:
+                user_conversation.append({"role": msg["role"], "text": text})
+
+    return user_conversation
 
 
 class UserInputProducer:
@@ -513,3 +565,137 @@ class _PassFail:
 
 
 PassFail = _PassFail()
+
+
+class Expect:
+    def __init__(self, traces: Sequence[Trace]) -> None:
+        if not traces:
+            raise ValueError("traces must not be an empty list")
+        self.traces = traces
+
+    def _to_equal(self, a, b):
+        assert a == b, f"{a} != {b}"
+
+    @property
+    def user_input(self):
+        user_inputs = [
+            trace.attributes["ai.user.input"]
+            for trace in self.traces
+            if "ai.user.input" in trace.attributes
+        ]
+        assert user_inputs, "None of the traces have the attribute 'ai.user.input'"
+        return _StringAssertor(user_inputs)
+
+    @property
+    def agent_text_response(self):
+        agent_text_responses = [
+            trace.attributes["ai.agent.response"]
+            for trace in self.traces
+            if "ai.agent.response" in trace.attributes
+        ]
+        assert (
+            agent_text_responses
+        ), "None of the traces have the attribute 'ai.agent.response'"
+        return _StringAssertor(agent_text_responses)
+
+    @property
+    def tool_invocations(self):
+        tool_traces = [
+            trace for trace in self.traces if "ai.tool.use.id" in trace.attributes
+        ]
+        assert tool_traces, "None of the traces have the attribute 'ai.tool.use.id'"
+        return _ToolAssertor(tool_traces)
+
+
+class _StringAssertor:
+
+    _at: int
+    base_value: str
+    base_values: Sequence[str]
+
+    def __init__(self, base_values: str | Sequence[str], at=-1) -> None:
+        self.base_values = [base_values] if type(base_values) is str else base_values
+        self._at = at
+        self.base_value = self.base_values[at]
+
+    def at(self, index: int) -> "_StringAssertor":
+        return _StringAssertor(self.base_values, index)
+
+    def to_equal(self, value: str) -> None:
+        assert self.base_value == value, f"'{self.base_value}' != '{value}'"
+
+    def to_include(self, value: str) -> None:
+        assert (
+            value in self.base_value
+        ), f"'{self.base_value}' does not include '{value}'"
+
+    def to_not_include(self, value: str) -> None:
+        assert value not in self.base_value, f"'{self.base_value}' includes '{value}'"
+
+    def to_have_length(self, length=1):
+        assert (
+            len(self.base_value) >= length
+        ), f"Expected '{self.base_value}' to have at least length {length}, but it has length {len(self.base_value)}"
+
+
+class _ToolAssertor:
+    def __init__(self, tool_traces: Sequence[Trace]) -> None:
+        self.tool_traces = tool_traces
+
+    def to_include(self, tool_name: str, *, with_error: bool | None | str = False):
+        tool_invocations = [
+            trace
+            for trace in self.tool_traces
+            if tool_name == trace.attributes["ai.tool.name"]
+        ]
+        if not tool_invocations:
+            raise AssertionError(f"Tool {tool_name} was not invoked")
+        if with_error is None:
+            pass
+        errors = [
+            trace.attributes["ai.tool.error"]
+            for trace in tool_invocations
+            if "ai.tool.error" in trace.attributes
+        ]
+        if with_error:
+            if not any(errors):
+                raise AssertionError(f"Tool {tool_name} did not raise an error")
+            if type(with_error) is str:
+                assert any(error for error in errors if with_error in error)
+        else:
+            if any(errors):
+                raise AssertionError(f"Tool {tool_name} raised an error: {errors[0]}")
+        return _ToolInputOutputAssertor(tool_invocations)
+
+
+class _ToolInputOutputAssertor:
+    def __init__(self, tool_traces: Sequence[Trace]) -> None:
+        self.tool_traces = tool_traces
+
+    def with_input(self, expected_input: Any):
+        tool_name = self.tool_traces[0].attributes["ai.tool.name"]
+        if len(self.tool_traces) > 1:
+            message = f"Tool {tool_name} was not invoked with input '{expected_input}'"
+        else:
+            actual_input = self.tool_traces[0].attributes["ai.tool.input"]
+            message = f"Tool {tool_name} was invoked with input '{actual_input}' but expected '{expected_input}'"
+        assert any(
+            trace.attributes["ai.tool.input"] == expected_input
+            for trace in self.tool_traces
+            if "ai.tool.input" in trace.attributes
+        ), message
+        return self
+
+    def with_output(self, expected_output: Any):
+        tool_name = self.tool_traces[0].attributes["ai.tool.name"]
+        if len(self.tool_traces) > 1:
+            message = f"Tool {tool_name} did not return output '{expected_output}'"
+        else:
+            actual_output = self.tool_traces[0].attributes["ai.tool.output"]
+            message = f"Tool {tool_name} returned output '{actual_output}' but expected '{expected_output}'"
+        assert any(
+            trace.attributes["ai.tool.output"] == expected_output
+            for trace in self.tool_traces
+            if "ai.tool.output" in trace.attributes
+        ), message
+        return self

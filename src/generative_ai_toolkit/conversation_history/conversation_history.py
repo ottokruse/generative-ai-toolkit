@@ -81,7 +81,7 @@ class InMemoryConversationHistory(ConversationHistory):
     ) -> None:
         self._conversation_id = Ulid().ulid
         self._auth_context = None
-        self._message_cache = {None: {self._conversation_id: []}}
+        self._message_cache = {}
 
     @property
     def conversation_id(self):
@@ -89,7 +89,6 @@ class InMemoryConversationHistory(ConversationHistory):
 
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
-        self._message_cache[self._auth_context].setdefault(self._conversation_id, [])
 
     @property
     def auth_context(self) -> str | None:
@@ -97,18 +96,20 @@ class InMemoryConversationHistory(ConversationHistory):
 
     def set_auth_context(self, auth_context: str | None):
         self._auth_context = auth_context
-        self._message_cache.setdefault(auth_context, {})
 
     def add_message(self, msg: Message) -> None:
-        self._message_cache[self._auth_context][self._conversation_id].append(msg)
+        self._message_cache.setdefault(self._auth_context, {}).setdefault(
+            self._conversation_id, []
+        ).append(msg)
 
     @property
     def messages(self) -> Sequence[Message]:
-        return self._message_cache[self._auth_context][self._conversation_id]
+        return self._message_cache.get(self._auth_context, {}).get(
+            self._conversation_id, []
+        )
 
     def reset(self) -> None:
         self._conversation_id = Ulid().ulid
-        self._message_cache = {self._auth_context: {self._conversation_id: []}}
 
 
 class DynamoDbConversationHistory(ConversationHistory):
@@ -118,11 +119,17 @@ class DynamoDbConversationHistory(ConversationHistory):
     def __init__(
         self,
         table_name: str,
+        *,
         session: boto3.session.Session | None = None,
+        identifier: str | None = None,
     ) -> None:
         self.table = (session or boto3).resource("dynamodb").Table(table_name)
         self._conversation_id = Ulid().ulid
         self._auth_context = None
+        self.identifier = identifier
+
+    def __repr__(self) -> str:
+        return f"DynamoDbConversationHistory(table_name={self.table.name}, identifier={self.identifier})"
 
     @property
     def conversation_id(self) -> str:
@@ -139,15 +146,16 @@ class DynamoDbConversationHistory(ConversationHistory):
         self._auth_context = auth_context
 
     def add_message(self, msg: Message) -> None:
+        now = datetime.now(timezone.utc)
         item = {
             "pk": f"CONV#{self._auth_context or "_"}#{self.conversation_id}",
-            "sk": f"MSG#{str(len(self.messages) + 1).zfill(3)}",
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "sk": f"MSG#{self.identifier or "_"}#{int(now.timestamp() * 1000):014x}",
+            "created_at": now.isoformat(),
             "conversation_id": self.conversation_id,
-            "msg_nr": len(self.messages) + 1,
             "role": msg["role"],
             "content": DynamoDbMapper.to_dynamo(msg["content"]),
             "auth_context": self._auth_context,
+            "identifier": self.identifier,
         }
         try:
             self.table.put_item(
@@ -171,7 +179,7 @@ class DynamoDbConversationHistory(ConversationHistory):
                     KeyConditionExpression=Key("pk").eq(
                         f"CONV#{self._auth_context or "_"}#{self.conversation_id}"
                     )
-                    & Key("sk").begins_with("MSG#"),
+                    & Key("sk").begins_with(f"MSG#{self.identifier or "_"}#"),
                     **last_evaluated_key_param,
                     ConsistentRead=True,
                 )

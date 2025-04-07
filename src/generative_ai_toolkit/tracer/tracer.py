@@ -12,499 +12,368 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import wraps
 import sys
-import json
-import textwrap
+import traceback
 from typing import (
     Any,
-    Iterable,
+    Callable,
+    ContextManager,
+    Deque,
     Literal,
     Mapping,
     Protocol,
-    Sequence,
+    TextIO,
     TypeVar,
-    TypedDict,
-    TypeGuard,
+    Unpack,
+    cast,
+    overload,
+    runtime_checkable,
 )
-from collections import defaultdict
+from collections.abc import Sequence
+from collections import deque
+import inspect
 
-import boto3.session
-import boto3
-from boto3.dynamodb.conditions import Key
-
-from generative_ai_toolkit.utils.dynamodb import DynamoDbMapper
-from generative_ai_toolkit.utils.typings import (
-    LlmRequest,
-    NonStreamingResponse,
-    ToolUseResultStatus,
-    ToolUseResultContent,
-    Message,
+from generative_ai_toolkit.tracer.context import (
+    TraceContext,
+    TraceContextUpdate,
+    TraceContextProvider,
+    ContextVarTraceContextProvider,
 )
-from generative_ai_toolkit.utils.ulid import Ulid
+from generative_ai_toolkit.tracer.trace import Trace, TraceScope
+from generative_ai_toolkit.utils.logging import SimpleLogger
 
 
-class ToolRequestTrace(TypedDict):
-    tool_name: str
-    tool_input: dict
-    tool_use_id: str
-
-
-class ToolResponseTrace(TypedDict):
-    tool_response: Any
-    latency_ms: int
-
-
-RequestTrace = LlmRequest | ToolRequestTrace
-ResponseTrace = NonStreamingResponse | ToolResponseTrace
-
-
-class ConversationMessage(TypedDict):
-    role: Literal["user", "assistant"]
-    text: str
-
-
-class ToolUse(TypedDict):
-    tool_name: str
-    input: dict[str, Any]
-
-
-class ToolUseWithOutput(ToolUse):
-    status: ToolUseResultStatus
-    output: ToolUseResultContent
-
-
-@dataclass(slots=True, frozen=True, kw_only=True)
-class BaseTrace:
-    conversation_id: str
-    trace_id: Ulid
-    auth_context: str | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    additional_info: dict[str, Any] = field(default_factory=dict)
-
-    def __repr__(self) -> str:
-        return f"Trace(to={getattr(self, "to", "??")}, conversation_id={self.conversation_id}, trace_id={self.trace_id})"
-
-    def __str__(self) -> str:
-        return textwrap.dedent(
-            f"""
-            ======================================
-            {getattr(self, "to", "??")} TRACE ({self.__class__.__name__})
-            ======================================
-            To:              {getattr(self, "to", "??")}
-            Trace ID:        {self.trace_id}
-            Conversation ID: {self.conversation_id}
-            Auth context:    {self.auth_context}
-            Created at:      {self.created_at}
-            Additional info:
-              {json.dumps(self.additional_info, separators=(",", ":"))}
-            """
-        ).strip()
-
-
-def user_conversation_from_messages(messages: Iterable[Message]):
-    user_conversation: list[ConversationMessage] = []
-
-    for msg in messages:
-        texts: list[str] = []
-        for part in msg["content"]:
-            if "text" not in part:
-                continue
-            texts.append(part["text"])
-        if texts:
-            text = "\n".join(texts)
-            if user_conversation and user_conversation[-1]["role"] == msg["role"]:
-                user_conversation[-1]["text"] += "\n" + text
-            else:
-                user_conversation.append({"role": msg["role"], "text": text})
-
-    return user_conversation
-
-
-def tool_invocations_from_messages(messages: Iterable[Message]):
-    tool_invocations: dict[str, ToolUse | ToolUseWithOutput] = {}
-
-    for msg in messages:
-        if msg["role"] == "assistant":
-            for item in msg["content"]:
-                if "toolUse" in item:
-                    tool_use = item["toolUse"]
-                    tool_invocations[tool_use["toolUseId"]] = ToolUse(
-                        tool_name=tool_use["name"],
-                        input=tool_use["input"],
-                    )
-        if msg["role"] == "user":
-            for item in msg["content"]:
-                if "toolResult" in item:
-                    tool_result = item["toolResult"]
-                    tool_use = tool_invocations[tool_result["toolUseId"]]
-                    tool_invocations[tool_result["toolUseId"]] = ToolUseWithOutput(
-                        tool_name=tool_use["tool_name"],
-                        input=tool_use["input"],
-                        status=tool_result["status"],
-                        output=tool_result["content"],
-                    )
-
-    return list(tool_invocations.values())
-
-
-@dataclass(slots=True, frozen=True, repr=False)
-class LlmTrace(BaseTrace):
-    request: LlmRequest
-    response: NonStreamingResponse
-    to: Literal["LLM"] = "LLM"
+@runtime_checkable
+class Tracer(Protocol):
 
     @property
-    def user_conversation(self):
-        """
-        All that was said between agent and user, as captured by this trace
-        """
+    def context(self) -> TraceContext: ...
 
-        return user_conversation_from_messages(
-            (*self.request["messages"], self.response["output"]["message"])
-        )
+    def set_context(
+        self, **update: Unpack[TraceContextUpdate]
+    ) -> Callable[[], None]: ...
 
     @property
-    def tool_invocations(self):
-        """
-        All tool invocations, as captured by this trace
-        """
+    def current_trace(self) -> Trace: ...
 
-        return tool_invocations_from_messages(
-            (*self.request["messages"], self.response["output"]["message"])
-        )
-
-    def __str__(self) -> str:
-        return (
-            textwrap.dedent(
-                """
-                {base}
-                Request messages:
-                  {req}
-                Response message:
-                  {res}
-                Request (full):
-                  {req_full}
-                Response (full):
-                  {res_full}
-                """
-            )
-            .format(
-                to=self.to,
-                base=BaseTrace.__str__(self),
-                req=self.request["messages"][-1]["content"][0],
-                req_full=json.dumps(self.request, separators=(", ", ":")),
-                res=self.response["output"]["message"]["content"],
-                res_full=json.dumps(self.response, separators=(", ", ":")),
-            )
-            .strip()
-        )
-
-
-@dataclass(slots=True, frozen=True, repr=False)
-class ToolTrace(BaseTrace):
-    request: ToolRequestTrace
-    response: ToolResponseTrace
-    to: Literal["TOOL"] = "TOOL"
-
-    def __str__(self) -> str:
-        return (
-            textwrap.dedent(
-                """
-                {base}
-                Request:
-                  {req}
-                Response:
-                  {res}
-                """
-            )
-            .format(
-                to=self.to,
-                base=BaseTrace.__str__(self),
-                req=json.dumps(self.request, separators=(", ", ":")),
-                res=json.dumps(self.response, separators=(", ", ":")),
-            )
-            .strip()
-        )
-
-
-Trace = LlmTrace | ToolTrace
-
-
-def is_llm_request(req: RequestTrace) -> TypeGuard[LlmRequest]:
-    return "messages" in req
-
-
-def is_tool_request(req: RequestTrace) -> TypeGuard[ToolRequestTrace]:
-    return "tool_name" in req
-
-
-def is_llm_response(res: ResponseTrace) -> TypeGuard[NonStreamingResponse]:
-    return "output" in res
-
-
-def is_tool_response(res: ResponseTrace) -> TypeGuard[ToolResponseTrace]:
-    return "tool_response" in res
-
-
-class AgentTracer(Protocol):
     def trace(
         self,
-        conversation_id: str,
-        to: Literal["LLM", "TOOL"],
-        req: RequestTrace,
-        res: ResponseTrace,
-        auth_context: str | None = None,
-    ) -> None: ...
+        span_name: str,
+        *,
+        parent_span: Trace | None = None,
+        scope: TraceScope | None = None,
+        resource_attributes: Mapping[str, Any] | None = None,
+        span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
+    ) -> ContextManager[Trace]: ...
 
     def get_traces(
-        self, conversation_id: str, auth_context: str | None
+        self, attribute_filter: Mapping[str, Any] | None = None
     ) -> Sequence[Trace]: ...
 
-    def set_additional_info(self, additional_info: Mapping[str, Any]): ...
+
+@runtime_checkable
+class HasTracer(Protocol):
+
+    @property
+    def tracer(self) -> Tracer: ...
 
 
-class InMemoryAgentTracer(AgentTracer):
-    _traces: dict[str | None, dict[str, list[Trace]]]
-    additional_info: dict[str, Any]
+F = TypeVar("F", bound=Callable)
 
-    def __init__(self) -> None:
-        self._traces = defaultdict(lambda: defaultdict(list))
-        self.additional_info = {}
 
-    def trace(
-        self,
-        conversation_id: str,
-        to: Literal["LLM", "TOOL"],
-        req: RequestTrace,
-        res: ResponseTrace,
-        auth_context: str | None = None,
-    ):
-        ulid = Ulid()
-        request = deepcopy(req)
-        response = deepcopy(res)
-        trace: Trace
-        if to == "LLM" and is_llm_request(request) and is_llm_response(response):
-            trace = LlmTrace(
-                conversation_id=conversation_id,
-                created_at=ulid.timestamp,
-                trace_id=ulid,
-                request=request,
-                response=response,
-                additional_info=self.additional_info,
-            )
-        elif to == "TOOL" and is_tool_request(request) and is_tool_response(response):
-            trace = ToolTrace(
-                conversation_id=conversation_id,
-                created_at=ulid.timestamp,
-                trace_id=ulid,
-                request=request,
-                response=response,
-                additional_info=self.additional_info,
-            )
+@overload
+def traced(arg: F) -> F: ...
+
+
+@overload
+def traced(
+    arg: str,
+    *,
+    scope: TraceScope | None = None,
+    span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
+    tracer: Tracer | None = None,
+) -> Callable[[F], F]: ...
+
+
+def traced(
+    arg: F | str,
+    *,
+    scope: TraceScope | None = None,
+    span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
+    tracer: Tracer | None = None,
+) -> F | Callable[[F], F]:
+    if callable(arg):
+        func = arg
+        span_name = func.__name__
+        return _create_decorator(
+            func, span_name, scope=scope, span_kind=span_kind, tracer=tracer
+        )
+
+    span_name = arg
+
+    def decorator(func: F) -> F:
+        return _create_decorator(
+            func, span_name, scope=scope, span_kind=span_kind, tracer=tracer
+        )
+
+    return decorator
+
+
+def _create_decorator(
+    func: F,
+    span_name: str,
+    *,
+    parent_span: Trace | None = None,
+    scope: TraceScope | None = None,
+    resource_attributes: Mapping[str, Any] | None = None,
+    span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
+    tracer: Tracer | None = None,
+) -> F:
+    @wraps(func)
+    def generator_wrapper(*args, **kwargs):
+        if tracer:
+            resolved_tracer = tracer
+        elif args and isinstance(args[0], HasTracer):
+            resolved_tracer = args[0].tracer
         else:
-            raise ValueError("Invalid trace")
-        self._traces[auth_context][conversation_id].append(trace)
+            raise ValueError(
+                f"Function {func.__name__} is not compatible with the @traced decorator."
+                " Use the decorator on a method of a class that satisfies the HasTracer protocol (i.e. has a .tracer property)."
+                " Alternatively, pass a tracer explicitly: @traced('span-name', tracer=mytracer)"
+            )
+        with resolved_tracer.trace(
+            span_name,
+            span_kind=span_kind,
+            parent_span=parent_span,
+            scope=scope,
+            resource_attributes=resource_attributes,
+        ):
+            try:
+                res = func(*args, **kwargs)
+                if inspect.isgenerator(res):
+                    return (yield from res)
+                elif inspect.iscoroutine(res) or inspect.isasyncgen(res):
+                    raise RuntimeError(
+                        "The @traced decorator can only be used for sync functions and generators, not async ones."
+                    )
+                yield res
+            except GeneratorExit:
+                pass
 
-    def get_traces(self, conversation_id: str, auth_context: str | None = None):
-        return self._traces.get(auth_context, {}).get(conversation_id, [])
+    if inspect.isgeneratorfunction(func):
+        return cast(F, generator_wrapper)
+    else:
 
-    def set_additional_info(self, additional_info: Mapping[str, Any]):
-        self.additional_info = dict(deepcopy(additional_info))
+        @wraps(func)
+        def non_generator_wrapper(*args, **kwargs):
+            for res in generator_wrapper(*args, **kwargs):
+                return res
 
-
-class SingleConversationTracer(InMemoryAgentTracer):
-    conversation_id: str | None
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.conversation_id = None
-
-    def trace(
-        self,
-        conversation_id: str,
-        to: Literal["LLM", "TOOL"],
-        req: RequestTrace,
-        res: ResponseTrace,
-        auth_context: str | None = None,
-    ):
-        if conversation_id != self.conversation_id:
-            self._traces = defaultdict(
-                lambda: defaultdict(list)
-            )  # clear traces from prior conversation_id
-            self.conversation_id = conversation_id
-        super().trace(
-            conversation_id=conversation_id,
-            to=to,
-            req=req,
-            res=res,
-            auth_context=auth_context,
-        )
+        return cast(F, non_generator_wrapper)
 
 
-class NoopAgentTracer(AgentTracer):
-    def trace(
-        self,
-        conversation_id: str,
-        to: Literal["LLM", "TOOL"],
-        req: RequestTrace,
-        res: ResponseTrace,
-        auth_context: str | None = None,
-    ):
-        pass
-
-    def get_traces(self, conversation_id: str, auth_context: str | None = None):
-        raise NotImplementedError(
-            f"You're using the {self.__class__.__name__} which doesn't support retrieving past traces"
-        )
-
-    def set_additional_info(self, additional_info: Mapping[str, Any]):
-        pass
-
-
-class DynamoDbAgentTracer(AgentTracer):
-    additional_info: dict[str, Any]
+class ContextAwareSpanPersistor:
+    span_name: str
+    span_kind: Literal["INTERNAL", "SERVER", "CLIENT"]
+    trace: Trace
+    persistor: Callable[["Trace"], None]
+    trace_context: TraceContextProvider
+    _reset: Callable[[], None]
+    parent_span: Trace | None
+    scope: TraceScope | None
+    resource_attributes: Mapping[str, Any] | None
 
     def __init__(
-        self, table_name: str, session: boto3.session.Session | None = None
+        self,
+        span_name: str,
+        *,
+        parent_span: Trace | None = None,
+        scope: TraceScope | None = None,
+        resource_attributes: Mapping[str, Any] | None = None,
+        span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
+        persistor: Callable[["Trace"], None],
+        trace_context: TraceContextProvider,
     ) -> None:
-        self.table = (session or boto3).resource("dynamodb").Table(table_name)
-        self.additional_info = {}
+        self.span_name = span_name
+        self.span_kind = span_kind
+        self.persistor = persistor
+        self.trace_context = trace_context
+        self.parent_span = parent_span
+        self.scope = scope
+        self.resource_attributes = resource_attributes
 
-    def trace(
-        self,
-        conversation_id: str,
-        to: Literal["LLM", "TOOL"],
-        req: RequestTrace,
-        res: ResponseTrace,
-        auth_context: str | None = None,
-    ):
-        now = datetime.now(timezone.utc)
-        ulid = Ulid()
-        trace: Trace
-        if to == "LLM" and is_llm_request(req) and is_llm_response(res):
-            trace = LlmTrace(
-                conversation_id=conversation_id,
-                created_at=now,
-                trace_id=ulid,
-                request=DynamoDbMapper.to_dynamo(req),
-                response=DynamoDbMapper.to_dynamo(res),
-                additional_info=self.additional_info,
-                auth_context=auth_context,
+    def __enter__(self):
+        started_at = datetime.now(timezone.utc)
+        context = self.trace_context.context
+        self.trace = Trace(
+            self.span_name,
+            trace_id=context.span.trace_id if context.span else None,
+            span_kind=self.span_kind,
+            started_at=started_at,
+            parent_span=self.parent_span or context.span,
+            scope=self.scope or context.scope,
+            resource_attributes=self.resource_attributes or context.resource_attributes,
+        )
+        self._reset = self.trace_context.set_context(span=self.trace)
+        return self.trace
+
+    def __exit__(self, exc_type, exc_value, _traceback):
+        self.trace.ended_at = datetime.now(timezone.utc)
+        self._reset()
+        if exc_type:
+            self.trace.span_status = "ERROR"
+            self.trace.add_attribute("exception.type", exc_type.__name__)
+            self.trace.add_attribute("exception.message", str(exc_value))
+            self.trace.add_attribute(
+                "exception.traceback", "".join(traceback.format_tb(_traceback))
             )
-        elif to == "TOOL" and is_tool_request(req) and is_tool_response(res):
-            trace = ToolTrace(
-                conversation_id=conversation_id,
-                created_at=now,
-                trace_id=ulid,
-                request=DynamoDbMapper.to_dynamo(req),
-                response=DynamoDbMapper.to_dynamo(res),
-                additional_info=self.additional_info,
-                auth_context=auth_context,
-            )
-        else:
-            raise ValueError("Invalid trace")
-        try:
-            self.table.put_item(
-                Item={
-                    "pk": f"CONV#{auth_context or '_'}#{conversation_id}",
-                    "sk": f"TRACE#{trace.trace_id}",
-                    **DynamoDbMapper.to_dynamo(
-                        {
-                            "created_at": trace.created_at,
-                            "conversation_id": trace.conversation_id,
-                            "trace_id": trace.trace_id.ulid,
-                            "to": trace.to,
-                            "request": trace.request,
-                            "response": trace.response,
-                            "additional_info": trace.additional_info,
-                            "auth_context": trace.auth_context,
-                        }
-                    ),
-                },
-                ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
-            )
-        except self.table.meta.client.exceptions.ResourceNotFoundException as e:
-            raise ValueError(f"Table {self.table.name} does not exist") from e
-        except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
-            raise ValueError(f"Trace {trace.trace_id} already exists") from e
-
-    def get_traces(self, conversation_id: str, auth_context: str | None = None):
-        items = []
-        last_evaluated_key_param: dict[str, Any] = {}
-        while True:
-            try:
-                response = self.table.query(
-                    KeyConditionExpression=Key("pk").eq(
-                        f"CONV#{auth_context or '_'}#{conversation_id}"
-                    )
-                    & Key("sk").begins_with("TRACE#"),
-                    **last_evaluated_key_param,
-                )
-
-            except self.table.meta.client.exceptions.ResourceNotFoundException as e:
-                raise ValueError(f"Table {self.table.name} does not exist") from e
-            items.extend(response["Items"])
-            if "LastEvaluatedKey" not in response:
-                break
-            last_evaluated_key_param = {
-                "ExclusiveStartKey": response["LastEvaluatedKey"]
-            }
-        return [self.item_to_trace(item) for item in DynamoDbMapper.from_dynamo(items)]
-
-    @staticmethod
-    def item_to_trace(item: dict[str, Any]):
-        params = {
-            "conversation_id": str(item["conversation_id"]),
-            "trace_id": Ulid(item["trace_id"]),
-            "to": item["to"],
-            "request": item["request"],
-            "response": item["response"],
-            "created_at": datetime.fromisoformat(item["created_at"]),
-            "additional_info": item["additional_info"],
-            "auth_context": item.get("auth_context"),
-        }
-        return LlmTrace(**params) if item["to"] == "LLM" else ToolTrace(**params)
-
-    def set_additional_info(self, additional_info: Mapping[str, Any]):
-        self.additional_info = dict(deepcopy(additional_info))
+        self.persistor(self.trace)
 
 
-class StderrAgentTracer(AgentTracer):
-    additional_info: dict[str, Any]
+class BaseTracer(Tracer):
 
-    def __init__(self) -> None:
-        self.additional_info = {}
+    trace_context_provider: TraceContextProvider
 
-    def trace(
-        self,
-        conversation_id: str,
-        to: Literal["LLM", "TOOL"],
-        req,
-        res,
-        auth_context: str | None = None,
-    ):
-        print(
-            f"TRACE {conversation_id}:{auth_context or '_'}:{to}",
-            json.dumps(req, default=str),
-            json.dumps(res, default=str),
-            json.dumps(self.additional_info, default=str),
-            file=sys.stderr,
+    def __init__(self, trace_context_provider: TraceContextProvider | None = None):
+        self.trace_context_provider = (
+            trace_context_provider or ContextVarTraceContextProvider()
         )
 
-    def get_traces(self, conversation_id: str, auth_context: str | None = None):
+    @property
+    def context(self) -> TraceContext:
+        return self.trace_context_provider.context
+
+    def set_context(self, **update: Unpack[TraceContextUpdate]) -> Callable[[], None]:
+        return self.trace_context_provider.set_context(**update)
+
+    @property
+    def current_trace(self) -> Trace:
+        context = self.trace_context_provider.context
+        if not context.span:
+            raise ValueError("No active trace in context")
+        return context.span
+
+    def trace(
+        self,
+        span_name: str,
+        *,
+        parent_span: Trace | None = None,
+        scope: TraceScope | None = None,
+        resource_attributes: Mapping[str, Any] | None = None,
+        span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
+    ):
+        return ContextAwareSpanPersistor(
+            span_name,
+            span_kind=span_kind,
+            parent_span=parent_span,
+            scope=scope,
+            resource_attributes=resource_attributes,
+            persistor=self.persist,
+            trace_context=self,
+        )
+
+    def get_traces(
+        self, attribute_filter: Mapping[str, Any] | None = None
+    ) -> Sequence[Trace]:
         raise NotImplementedError
 
-    def set_additional_info(self, additional_info: Mapping[str, Any]):
-        self.additional_info = dict(deepcopy(additional_info))
+    def persist(self, trace: Trace):
+        raise NotImplementedError
 
 
-T = TypeVar("T", bound=Mapping)
+class NoopTracer(BaseTracer):
+
+    def persist(self, trace: Trace):
+        pass
 
 
-def deepcopy(d: T) -> T:
-    """
-    A dumb but threadsafe alternative to copy.deepcopy()
-    """
-    return json.loads(json.dumps(d))
+class StreamTracer(BaseTracer):
+
+    def __init__(
+        self,
+        *,
+        stream: TextIO | None = None,
+        trace_context_provider: TraceContextProvider | None = None,
+    ):
+        super().__init__(trace_context_provider)
+        self._stream = stream or sys.stdout
+
+    def persist(self, trace: Trace):
+        raise NotImplementedError
+
+
+class StructuredLogsTracer(StreamTracer):
+
+    def __init__(
+        self,
+        *,
+        stream: TextIO | None = None,
+        trace_context_provider: TraceContextProvider | None = None,
+    ):
+        super().__init__(stream=stream, trace_context_provider=trace_context_provider)
+        self.logger = SimpleLogger("TraceLogger", stream=self._stream)
+
+    def persist(self, trace: Trace):
+        self.logger.info("Trace", trace=trace)
+
+
+class HumanReadableTracer(StreamTracer):
+
+    def persist(self, trace: Trace):
+        print(trace.as_human_readable(), file=self._stream)
+
+
+class InMemoryTracer(BaseTracer):
+
+    def __init__(
+        self,
+        memory_size=1000,
+        trace_context_provider: TraceContextProvider | None = None,
+    ) -> None:
+        super().__init__(trace_context_provider=trace_context_provider)
+        self._memory: Deque[Trace] = deque(maxlen=memory_size)
+
+    def persist(self, trace: Trace):
+        self._memory.append(trace)
+
+    def get_traces(
+        self, attribute_filter: Mapping[str, Any] | None = None
+    ) -> Sequence[Trace]:
+        return list(
+            filter(
+                lambda trace: not attribute_filter
+                or all(
+                    k in trace.attributes and trace.attributes[k] == v
+                    for k, v in attribute_filter.items()
+                ),
+                sorted(self._memory, key=lambda t: t.started_at),
+            )
+        )
+
+
+class TeeTracer(BaseTracer):
+
+    _tracers: list[BaseTracer]
+
+    def __init__(
+        self,
+        trace_context_provider: TraceContextProvider | None = None,
+    ) -> None:
+        super().__init__(trace_context_provider=trace_context_provider)
+        self._tracers = []
+
+    def add_tracer(self, tracer: BaseTracer):
+        self._tracers.append(tracer)
+
+    def persist(self, trace: Trace):
+        for tracer in self._tracers:
+            tracer.persist(trace)
+
+    def get_traces(
+        self, attribute_filter: Mapping[str, Any] | None = None
+    ) -> Sequence[Trace]:
+        if not self._tracers:
+            return []
+        return self._tracers[0].get_traces(attribute_filter)

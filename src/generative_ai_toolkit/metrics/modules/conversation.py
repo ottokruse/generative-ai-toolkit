@@ -14,14 +14,12 @@
 
 import json
 import textwrap
-from concurrent.futures import Executor
 from typing import cast
 
 import boto3
 
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
-from generative_ai_toolkit.tracer import LlmTrace
-from generative_ai_toolkit.test import LlmCaseTrace
+from generative_ai_toolkit.test import CaseTrace, user_conversation_from_trace
 from generative_ai_toolkit.utils.typings import NonStreamingResponse
 from generative_ai_toolkit.utils.llm_response import json_parse
 
@@ -42,24 +40,22 @@ class ConversationExpectationMetric(BaseMetric):
         self.bedrock_client = boto3.client("bedrock-runtime")
         self.expectations = expectations
 
-    def evaluate_conversation(
-        self, conversation_traces, *, executor: Executor, **kwargs
-    ):
-        trace = conversation_traces[
-            -1
-        ]  # Use the conversation as captured in the last trace
-
-        if not isinstance(trace, LlmTrace):
+    def evaluate_conversation(self, conversation_traces, **kwargs):
+        for trace in reversed(conversation_traces):
+            if trace.attributes.get("ai.trace.type") == "llm-invocation":
+                break
+        else:
             return
 
         expectations = self.expectations
-        if isinstance(trace, LlmCaseTrace) and trace.case.overall_expectations:
+        if isinstance(trace, CaseTrace) and trace.case.overall_expectations:
             expectations = trace.case.overall_expectations
         if not expectations:
             return
 
-        fut = executor.submit(
-            self.bedrock_client.converse,
+        user_conversation = user_conversation_from_trace(trace)
+
+        text_response = self.bedrock_client.converse(
             modelId=self.model_id,
             messages=[
                 {
@@ -93,7 +89,7 @@ class ConversationExpectationMetric(BaseMetric):
                                 """
                             )
                             .format(
-                                conversation=json.dumps(trace.user_conversation),
+                                conversation=json.dumps(user_conversation),
                                 expectations=expectations,
                             )
                             .strip()
@@ -111,7 +107,7 @@ class ConversationExpectationMetric(BaseMetric):
                 }
             ],
         )
-        response = json_parse(cast(NonStreamingResponse, fut.result()))
+        response = json_parse(cast(NonStreamingResponse, text_response))
 
         return Measurement(
             name="Correctness",

@@ -15,8 +15,8 @@ dependencies = [
 ]
 authors = [
   {name = "Otto Kruse", email = "ottokrus@amazon.nl"},
-  {name = "Rui Costa", email = "ruicos@amazon.com"},
   {name = "Ryan French", email = "ryanjfre@amazon.co.uk"},
+  {name = "Rui Costa", email = "ruicos@amazon.com"},
 ]
 
 [project.urls]
@@ -28,6 +28,7 @@ authors = [
 run-agent = [
     "flask~=3.1.0",
     "gunicorn~=23.0.0",
+    "opentelemetry-proto~=1.31.1",
     "pydantic~=2.10.6",
 ]
 evaluate = [
@@ -37,7 +38,6 @@ evaluate = [
 interactive = [
     "flask~=3.1.0",
     "gunicorn~=23.0.0",
-    "itables~=2.1.4",
     "jsonpickle~=3.2.2",
     "pandas~=2.2.2",
     "requests~=2.32.3",
@@ -51,9 +51,9 @@ all = [
     "fastapi~=0.112.0",
     "flask~=3.1.0",
     "gunicorn~=23.0.0",
-    "itables~=2.1.4",
     "jsonpickle~=3.2.2",
     "nltk~=3.9.1",
+    "opentelemetry-proto~=1.31.1",
     "pandas~=2.2.2",
     "pydantic~=2.10.6",
     "requests~=2.32.3",
@@ -64,9 +64,6 @@ all = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-"*" = ["ui/dist/**/*"]
 
 [tool.setuptools.exclude-package-data]
 generative_ai_toolkit = ["tests/*"]

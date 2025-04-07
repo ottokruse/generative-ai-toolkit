@@ -15,13 +15,12 @@
 import json
 
 import textwrap
-from concurrent.futures import Executor
 from typing import cast
 
-import boto3.session
+import boto3
 
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
-from generative_ai_toolkit.tracer import LlmTrace
+from generative_ai_toolkit.test import user_conversation_from_trace
 from generative_ai_toolkit.utils.typings import NonStreamingResponse
 from generative_ai_toolkit.utils.llm_response import json_parse
 
@@ -36,17 +35,16 @@ class AgentResponseConcisenessMetric(BaseMetric):
         self.model_id = model_id
         self.bedrock_client = boto3.client("bedrock-runtime")
 
-    def evaluate_conversation(
-        self, conversation_traces, *, executor: Executor, **kwargs
-    ):
-        trace = conversation_traces[
-            -1
-        ]  # Use the conversation as captured in the last trace
-        if not isinstance(trace, LlmTrace):
+    def evaluate_conversation(self, conversation_traces, **kwargs):
+        for trace in reversed(conversation_traces):
+            if trace.attributes.get("ai.trace.type") == "llm-invocation":
+                break
+        else:
             return
 
-        fut = executor.submit(
-            self.bedrock_client.converse,
+        user_conversation = user_conversation_from_trace(trace)
+
+        text_response = self.bedrock_client.converse(
             modelId=self.model_id,
             messages=[
                 {
@@ -60,7 +58,7 @@ class AgentResponseConcisenessMetric(BaseMetric):
                                 1. Are the agents responses concise?
                                 2. Does the agent provide superfluous examples when it asks questions?
                                 3. Does the agent utter useless encouragements to the user, such as "Sure thing!", "Great!", "Awesome!"?
-                                4. Does the agent mention how it works to the user, without this being sollicited?
+                                4. Does the agent mention how it works to the user, without this being solicited?
                                 5. When the user provides information, the agent should not reiterate that back to the user. E.g. saying "Got it, you want to ..." is unnecessary.
 
                                 Here is the conversation:
@@ -76,7 +74,7 @@ class AgentResponseConcisenessMetric(BaseMetric):
                                 Only return the valid JSON object.
                                 """
                             )
-                            .format(conversation=json.dumps(trace.user_conversation))
+                            .format(conversation=json.dumps(user_conversation))
                             .strip()
                         }
                     ],
@@ -92,7 +90,7 @@ class AgentResponseConcisenessMetric(BaseMetric):
                 }
             ],
         )
-        response = json_parse(cast(NonStreamingResponse, fut.result()))
+        response = json_parse(cast(NonStreamingResponse, text_response))
 
         return Measurement(
             name="Conciseness",

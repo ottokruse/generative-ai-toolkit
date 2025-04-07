@@ -22,7 +22,8 @@ import boto3
 from boto3.dynamodb.types import TypeDeserializer
 
 from generative_ai_toolkit.evaluate import GenerativeAIToolkit
-from generative_ai_toolkit.tracer import Trace, DynamoDbAgentTracer
+from generative_ai_toolkit.tracer import Trace
+from generative_ai_toolkit.tracer.dynamodb import DynamoDbTracer
 from generative_ai_toolkit.utils.logging import logger
 from generative_ai_toolkit.metrics import BaseMetric
 
@@ -54,14 +55,17 @@ class _AWSLambdaRunner:
                 new_image = unmarshall(record["dynamodb"].get("NewImage", {}))
                 if "trace_id" not in new_image:
                     continue
-                traces.append(DynamoDbAgentTracer.item_to_trace(new_image))
+                traces.append(DynamoDbTracer.item_to_trace(new_image))
 
+        traces.sort(key=lambda t: t.span_id)
         traces.sort(key=lambda t: t.trace_id)
-        traces.sort(key=lambda t: t.conversation_id)
+        traces.sort(key=lambda t: t.attributes["conversation_id"])
 
         conversations = [
             list(group)
-            for key, group in groupby(traces, key=lambda t: t.conversation_id)
+            for key, group in groupby(
+                traces, key=lambda t: t.attributes["conversation_id"]
+            )
         ]
 
         evaluation_timeout = (context.get_remaining_time_in_millis() / 1000) - 10
@@ -128,35 +132,33 @@ def measure(
         for conversation_measurements in results:
             # Emit EMF logs for measurements at conversation level:
             last_trace = conversation_measurements.traces[-1].trace
-            timestamp = int(last_trace.trace_id.timestamp.timestamp() * 1000)
             for measurement in conversation_measurements.measurements:
                 logger.metric(
                     measurement,
                     conversation_id=conversation_measurements.conversation_id,
-                    auth_context=last_trace.auth_context,
+                    auth_context=last_trace.attributes.get("auth_context"),
                     additional_info=measurement.additional_info,
                     namespace="GenerativeAIToolkit",
                     common_dimensions={
                         "AgentName": AWSLambdaRunner.agent_name,
                     },
-                    timestamp=timestamp,
+                    timestamp=int(last_trace.started_at.timestamp() * 1000),
                 )
             # Emit EMF logs for measurements at trace level:
             for conversation_traces in conversation_measurements.traces:
                 trace = conversation_traces.trace
-                timestamp = int(trace.trace_id.timestamp.timestamp() * 1000)
                 for measurement in conversation_traces.measurements:
                     logger.metric(
                         measurement,
                         conversation_id=conversation_measurements.conversation_id,
-                        auth_context=trace.auth_context,
+                        auth_context=trace.attributes.get("auth_context"),
                         trace_id=trace.trace_id,
                         additional_info=measurement.additional_info,
                         namespace="GenerativeAIToolkit",
                         common_dimensions={
                             "AgentName": AWSLambdaRunner.agent_name,
                         },
-                        timestamp=timestamp,
+                        timestamp=int(last_trace.started_at.timestamp() * 1000),
                     )
     except TimeoutError:
         logger.error("GenerativeAIToolkit evaluation timed out")

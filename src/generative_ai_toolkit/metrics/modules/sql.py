@@ -50,35 +50,32 @@ class SqlMetric(BaseMetric):
                                 If the trace is not an instance of LlmTrace or ToolTrace, it returns None.
         """
         if not isinstance(trace, CaseTrace):
-            return None
-        try:
-            if "tool_response" in trace.response:
-                # Extract the case name from the trace
-                case_name = trace.case.name
-                if case_name in self.valid_queries_responses:
-                    query_info = self.valid_queries_responses[case_name]
+            return
+        if "ai.tool.output" not in trace.attributes:
+            return
 
-                    # Extract the tool's response
-                    tool_response = trace.response["tool_response"]
+        case_name = trace.case.name
+        query_info = self.valid_queries_responses.get(case_name)
+        if not query_info:
+            return
 
-                    # Validate the response by comparing the 'rows' of the expected and actual output
-                    expected_response_rows = query_info["expected_response"]["rows"]
-                    actual_response_rows = tool_response["rows"]
+        # Extract the tool's response
+        tool_response = trace.attributes["ai.tool.output"]
 
-                    validation_passed = actual_response_rows == expected_response_rows
+        # Validate the response by comparing the 'rows' of the expected and actual output
+        expected_response_rows = query_info["expected_response"]["rows"]
+        actual_response_rows = tool_response["rows"]
 
-                    # Return a measurement indicating whether the validation passed
-                    return Measurement(
-                        name="SQL",
-                        value=float(1 if validation_passed else 0),
-                        validation_passed=validation_passed,
-                        additional_info={
-                            "expected_response_rows": expected_response_rows,
-                            "actual_response_rows": actual_response_rows,
-                            "case": case_name,
-                        },
-                    )
+        validation_passed = actual_response_rows == expected_response_rows
 
-        except Exception as e:
-            print(f"Error in SqlMetric: {e}")
-            return None
+        # Return a measurement indicating whether the validation passed
+        return Measurement(
+            name="SQL",
+            value=float(1 if validation_passed else 0),
+            validation_passed=validation_passed,
+            additional_info={
+                "expected_response_rows": expected_response_rows,
+                "actual_response_rows": actual_response_rows,
+                "case": case_name,
+            },
+        )

@@ -20,11 +20,10 @@ from typing import (
     TypedDict,
     Unpack,
 )
-from threading import local
+from contextvars import ContextVar
 
 from pydantic import BaseModel, Field
 from flask import Flask, Request, Response, request
-
 from generative_ai_toolkit.utils.logging import logger
 
 
@@ -65,18 +64,21 @@ class _Runner:
     def __init__(self) -> None:
         self._agent = None
         self._auth_context_fn = iam_auth_context_fn
-        self._thread_local = local()
+        self._context = ContextVar[Runnable | None]("agent", default=None)
 
     @property
     def agent(self) -> Runnable:
         if not self._agent:
             raise ValueError("Agent not configured yet")
-        if not callable(self._agent):
-            return self._agent
-        # Agent instances are not (expected to be) thread safe, so each thread must have it's own one
-        if not hasattr(self._thread_local, "agent"):
-            self._thread_local.agent = self._agent()
-        return self._thread_local.agent
+        # Cache an agent instance in each context:
+        context_agent = self._context.get()
+        if not context_agent:
+            if callable(self._agent):
+                context_agent = self._agent()
+            else:
+                context_agent = self._agent
+            self._context.set(context_agent)
+        return context_agent
 
     @property
     def auth_context_fn(self) -> AuthContextFn:

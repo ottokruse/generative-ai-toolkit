@@ -26,10 +26,10 @@ import json
 import os
 import sys
 import time
-from typing import Any, Mapping
+from typing import Any, Mapping, TextIO
 import traceback
 
-from generative_ai_toolkit.metrics import Measurement
+from generative_ai_toolkit.metrics.measurement import Measurement
 
 
 in_aws_lambda = os.environ.get("AWS_EXECUTION_ENV", "").startswith("AWS_Lambda_")
@@ -54,7 +54,8 @@ class SimpleLogger:
     }
     """
 
-    def __init__(self, name: str = ""):
+    def __init__(self, name: str = "", *, stream: TextIO | None = None):
+        self._stream = stream or sys.stdout
         self.fields = {}
         if name:
             self.fields["logger"] = name
@@ -77,6 +78,7 @@ class SimpleLogger:
                 "\r" if in_aws_lambda else "\n",  # no-op if not not in AWS Lambda
             ),
             flush=False if in_aws_lambda else True,  # not needed in AWS Lambda
+            file=self._stream,
         )
 
     def debug(self, message: str, **kwargs):
@@ -142,9 +144,9 @@ class SimpleLogger:
                             "Namespace": namespace,
                         }
                     ],
-                    "Timestamp": timestamp
-                    if timestamp is not None
-                    else int(time.time() * 1000),
+                    "Timestamp": (
+                        timestamp if timestamp is not None else int(time.time() * 1000)
+                    ),
                 },
             }
         )

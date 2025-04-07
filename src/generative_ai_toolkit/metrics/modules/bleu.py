@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Sequence, cast
+from typing import cast
 
 from generative_ai_toolkit.metrics import BaseMetric, Measurement
-from generative_ai_toolkit.tracer import Trace
-from generative_ai_toolkit.test import LlmCaseTrace
+from generative_ai_toolkit.test import CaseTrace, user_conversation_from_trace
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
 
@@ -26,20 +25,25 @@ class BleuMetric(BaseMetric):
     by comparing everything that was said by user and agent in a predefined test case.
     """
 
-    def evaluate_conversation(self, conversation_traces: Sequence[Trace], **kwargs):
-        trace = conversation_traces[
-            -1
-        ]  # Use the conversation as captured in the last trace
-        if not isinstance(trace, LlmCaseTrace):
+    def evaluate_conversation(self, conversation_traces, **kwargs):
+
+        for trace in reversed(conversation_traces):
+            if not isinstance(trace, CaseTrace):
+                continue
+            if trace.attributes.get("ai.trace.type") == "llm-invocation":
+                break
+        else:
             return
 
         case = trace.case
         if not case.expected_agent_responses_per_turn:
             return
 
+        user_conversation = user_conversation_from_trace(trace)
+
         min_bleu = 1
         actual_responses = [
-            msg["text"] for msg in trace.user_conversation if msg["role"] == "assistant"
+            msg["text"] for msg in user_conversation if msg["role"] == "assistant"
         ]
 
         for index, turn in enumerate(case.expected_agent_responses_per_turn):

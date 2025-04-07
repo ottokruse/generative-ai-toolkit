@@ -71,8 +71,6 @@ class EnhancedEvalResult:
         class Aggregated_counts:
             measurements: list[Measurement] = field(default_factory=list)
             trace_count: int = 0
-            llm_calls: int = 0
-            tool_calls: int = 0
             run_nrs: set[int] = field(default_factory=set)
             nr_passed = 0
             nr_failed = 0
@@ -98,7 +96,6 @@ class EnhancedEvalResult:
                     aggregated_counts[permutation_as_key].nr_failed += 1
 
             for measurements_for_trace in measurements_for_conversation.traces:
-                trace = measurements_for_trace.trace
                 aggregated_counts[permutation_as_key].trace_count += 1
                 for measurement in measurements_for_trace.measurements:
                     aggregated_counts[permutation_as_key].measurements.append(
@@ -108,10 +105,6 @@ class EnhancedEvalResult:
                         aggregated_counts[permutation_as_key].nr_passed += 1
                     elif measurement.validation_passed is False:
                         aggregated_counts[permutation_as_key].nr_failed += 1
-                if trace.to == "LLM":
-                    aggregated_counts[permutation_as_key].llm_calls += 1
-                elif trace.to == "TOOL":
-                    aggregated_counts[permutation_as_key].tool_calls += 1
 
         data = []
         for permutation_as_key, counts_per_permutation in aggregated_counts.items():
@@ -135,10 +128,6 @@ class EnhancedEvalResult:
                 ),
                 "Avg Trace count per run": counts_per_permutation.trace_count
                 / len(counts_per_permutation.run_nrs),
-                "Avg LLM calls per run": counts_per_permutation.llm_calls
-                / len(counts_per_permutation.run_nrs),
-                "Avg Tool calls per run": counts_per_permutation.tool_calls
-                / len(counts_per_permutation.run_nrs),
                 "Total Nr Passed": counts_per_permutation.nr_passed,
                 "Total Nr Failed": counts_per_permutation.nr_failed,
             }
@@ -151,9 +140,7 @@ class EnhancedEvalResult:
                     (
                         1
                         if column_name.startswith("Avg")
-                        else 2
-                        if column_name.startswith("Total Nr")
-                        else 0
+                        else 2 if column_name.startswith("Total Nr") else 0
                     ),
                     column_name,
                 )

@@ -9,7 +9,7 @@ The toolkit builds upon principles and methodologies detailed in our research pa
 
 ## Architecture
 
-<img src="./assets/images/architecture.png" alt="Architecture" width="1200" />
+<img src="./assets/images/architecture.drawio.png" alt="Architecture" width="1200" />
 
 ## Key Terms
 
@@ -276,6 +276,36 @@ print(response) # Okay, let me check the current weather report for Amsterdam us
 ```
 
 Note that this does not force the agent to use the provided tools, it merely makes them available for the agent to use.
+
+### X.X Unified Trace Model
+
+| Attribute Name                           | Description                                                                                                                                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ai.trace.type`                          | Used to identify the type of trace operation being performed. Values: "conversation-history-list", "conversation-history-add", "converse", "converse-stream", "tool-invocation", "llm-invocation" |
+| `ai.conversation.history.implementation` | The string representation of the conversation history implementation being used (e.g. the name of the Python class)                                                                               |
+| `peer.service`                           | Indicates the service being interacted with. Values: "memory:short-term", "tool:{tool_name}", "llm:{model_id}"                                                                                    |
+| `ai.conversation.history.messages`       | Contains the messages from the conversation history                                                                                                                                               |
+| `ai.conversation.history.message`        | Contains a single message being added to the conversation history                                                                                                                                 |
+| `ai.conversation.id`                     | The unique identifier for the conversation (inheritable attribute)                                                                                                                                |
+| `ai.auth.context`                        | The authentication context for the conversation (inheritable attribute)                                                                                                                           |
+| `ai.tool.name`                           | Name of the tool being invoked                                                                                                                                                                    |
+| `ai.tool.use.id`                         | Unique identifier for the tool usage                                                                                                                                                              |
+| `ai.tool.input`                          | The input parameters provided to the tool                                                                                                                                                         |
+| `ai.tool.output`                         | The response/output from the tool invocation                                                                                                                                                      |
+| `ai.tool.error`                          | Error information if tool invocation fails                                                                                                                                                        |
+| `ai.user.input`                          | The input provided by the user in the conversation                                                                                                                                                |
+| `ai.llm.request.inference.config`        | Configuration settings for the LLM inference                                                                                                                                                      |
+| `ai.llm.request.messages`                | Messages being sent to the LLM                                                                                                                                                                    |
+| `ai.llm.request.model.id`                | Identifier of the LLM model being used                                                                                                                                                            |
+| `ai.llm.request.system`                  | System prompt or configuration being sent to the LLM                                                                                                                                              |
+| `ai.llm.request.tool.config`             | Tool configuration being sent to the LLM                                                                                                                                                          |
+| `ai.llm.response.output`                 | Output received from the LLM                                                                                                                                                                      |
+| `ai.llm.response.stop.reason`            | Reason why the LLM stopped generating                                                                                                                                                             |
+| `ai.llm.response.usage`                  | Usage metrics from the LLM response                                                                                                                                                               |
+| `ai.llm.response.metrics`                | Additional metrics from the LLM response                                                                                                                                                          |
+| `ai.llm.response.error`                  | Error information if the LLM request fails                                                                                                                                                        |
+| `ai.agent.response`                      | The final concatenated response from the agent                                                                                                                                                    |
+| `service.name`                           | Name of the service, set to the class name of the agent                                                                                                                                           |
 
 ### 2.3 Tracing
 
