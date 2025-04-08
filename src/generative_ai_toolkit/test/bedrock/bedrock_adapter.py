@@ -222,7 +222,7 @@ class BedrockAgentAdapter(Protocol):
         start_time = datetime.now()
 
         return Trace(
-            trace_id=model_input.get("traceId"),
+            # trace_id=model_input.get("traceId"),
             span_id=uuid.uuid4().hex,
             span_name="llm-invocation",
             span_kind="CLIENT",
