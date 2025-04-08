@@ -62,14 +62,14 @@ class DynamoDbTracer(BaseTracer):
         except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
             raise ValueError(f"Trace {trace.trace_id} already exists") from e
 
-    def get_traces(self, attribute_filter=None):
-        if not attribute_filter or "trace_id" not in attribute_filter:
+    def get_traces(self, trace_id: str | None = None, attribute_filter=None):
+        if not trace_id:
             raise ValueError("trace_id must be provided")
-        elif len(attribute_filter) > 1:
+        if attribute_filter and len(attribute_filter) > 1:
             raise ValueError("Only trace_id filter is supported")
-        key_condition_expression = Key("pk").eq(
-            f"TRACE#{attribute_filter['trace_id']}"
-        ) & Key("sk").begins_with(f"SPAN#{self.identifier or "_"}#")
+        key_condition_expression = Key("pk").eq(f"TRACE#{trace_id}") & Key(
+            "sk"
+        ).begins_with(f"SPAN#{self.identifier or "_"}#")
         items = []
         last_evaluated_key: dict[str, Any] = {}
         while True:

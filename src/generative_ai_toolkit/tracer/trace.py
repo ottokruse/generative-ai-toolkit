@@ -57,11 +57,12 @@ class Trace:
         self.span_id = span_id or secrets.token_hex(8)
         if trace_id and parent_span and parent_span.trace_id != trace_id:
             raise ValueError(
-                "You provided trace_id and parent_span, but the parent span has a different trace_id "
+                f"You provided trace_id {trace_id} and parent_span {parent_span.span_id}, "
+                f"but the parent span has a different trace_id {parent_span.trace_id} "
                 "(you'll probably want to just provide parent_span, in which case the parent span's trace_id will be used)"
             )
-        self.trace_id = (
-            trace_id or parent_span.trace_id if parent_span else secrets.token_hex(16)
+        self.trace_id = trace_id or (
+            parent_span.trace_id if parent_span else secrets.token_hex(16)
         )
         self.parent_span = parent_span
         self.started_at = started_at or datetime.now(timezone.utc)

@@ -69,7 +69,9 @@ class Tracer(Protocol):
     ) -> ContextManager[Trace]: ...
 
     def get_traces(
-        self, attribute_filter: Mapping[str, Any] | None = None
+        self,
+        trace_id: str | None = None,
+        attribute_filter: Mapping[str, Any] | None = None,
     ) -> Sequence[Trace]: ...
 
 
@@ -275,7 +277,9 @@ class BaseTracer(Tracer):
         )
 
     def get_traces(
-        self, attribute_filter: Mapping[str, Any] | None = None
+        self,
+        trace_id: str | None = None,
+        attribute_filter: Mapping[str, Any] | None = None,
     ) -> Sequence[Trace]:
         raise NotImplementedError
 
@@ -339,7 +343,9 @@ class InMemoryTracer(BaseTracer):
         self._memory.append(trace)
 
     def get_traces(
-        self, attribute_filter: Mapping[str, Any] | None = None
+        self,
+        trace_id: str | None = None,
+        attribute_filter: Mapping[str, Any] | None = None,
     ) -> Sequence[Trace]:
         return list(
             filter(
@@ -372,8 +378,12 @@ class TeeTracer(BaseTracer):
             tracer.persist(trace)
 
     def get_traces(
-        self, attribute_filter: Mapping[str, Any] | None = None
+        self,
+        trace_id: str | None = None,
+        attribute_filter: Mapping[str, Any] | None = None,
     ) -> Sequence[Trace]:
         if not self._tracers:
             return []
-        return self._tracers[0].get_traces(attribute_filter)
+        return self._tracers[0].get_traces(
+            trace_id=trace_id, attribute_filter=attribute_filter
+        )
