@@ -375,22 +375,39 @@ def chat_messages_from_conversation_measurements(
 
 def traces_ui(
     traces: Iterable[Trace],
-    show_all_traces=False,
 ):
     conversation_id, auth_context, messages = chat_messages_from_traces(
         traces,
-        show_all_traces=show_all_traces,
     )
 
     with gr.Blocks(fill_width=True, title="Generative AI Toolkit") as demo:
-        gr.Markdown(
-            f"**Conversation ID**: {conversation_id} | **Auth context**: {auth_context}"
-        )
-        gr.Chatbot(
+        with gr.Row():
+            gr.Markdown(
+                f"**Conversation ID**: {conversation_id} | **Auth context**: {auth_context}"
+            )
+            toggle_all_traces = gr.Button("Show all traces", scale=0, min_width=200)
+        chatbot = gr.Chatbot(
             type="messages",
             height="full",
             label="Conversation",
             value=messages,  # type: ignore
+        )
+
+        def do_toggle_all_traces(state):
+            new_state = not state
+            new_label = "Hide internal traces" if new_state else "Show all traces"
+            *_, messages = chat_messages_from_traces(
+                traces,
+                show_all_traces=new_state,
+            )
+            return gr.update(value=new_label), new_state, messages
+
+        show_all_traces_toggle_state = gr.State(value=False)
+
+        toggle_all_traces.click(
+            fn=do_toggle_all_traces,
+            inputs=[show_all_traces_toggle_state],
+            outputs=[toggle_all_traces, show_all_traces_toggle_state, chatbot],
         )
     return demo
 
