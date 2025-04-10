@@ -46,6 +46,7 @@ class CaseTrace(Trace):
     case_nr: int
     run_nr: int
     permutation: Mapping[str, Any] | None
+    permutation_nr: int
 
     def __init__(
         self,
@@ -55,6 +56,7 @@ class CaseTrace(Trace):
         case: "Case",
         case_nr: int,
         run_nr: int,
+        permutation_nr: int,
         permutation: Mapping[str, Any] | None,
         trace_id: str | None = None,
         span_id: str | None = None,
@@ -79,6 +81,7 @@ class CaseTrace(Trace):
         self.case_nr = case_nr
         self.run_nr = run_nr
         self.permutation = permutation
+        self.permutation_nr = permutation_nr
 
 
 class _AgentLike(Protocol):
@@ -176,6 +179,7 @@ class Case:
             case_nr=case_trace_info.case_nr,
             run_nr=case_trace_info.run_nr,
             permutation=case_trace_info.permutation,
+            permutation_nr=case_trace_info.permutation_nr,
         )
 
     def run(

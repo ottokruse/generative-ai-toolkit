@@ -71,6 +71,10 @@ class BleuMetric(BaseMetric):
         return Measurement(
             name="BleuScore",
             value=min_bleu,
+            additional_info={
+                "conversation": user_conversation,
+                "expected_responses": case.expected_agent_responses_per_turn,
+            },
         )
 
 

@@ -115,4 +115,8 @@ class AgentResponseSimilarityMetric(BaseMetric):
         return Measurement(
             name="CosineSimilarity",
             value=min_similarity,
+            additional_info={
+                "conversation": user_conversation,
+                "expected_responses": case.expected_agent_responses_per_turn,
+            },
         )

@@ -12,18 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import signal
-import socket
-import subprocess
-import threading
-import time
-import json
-import urllib.request
 from collections import defaultdict
 from statistics import fmean
 from typing import Any, Callable, Iterable, Mapping, Sequence
-import webbrowser
 
 import pandas as pd
 from IPython.display import display
@@ -41,7 +32,7 @@ from generative_ai_toolkit.metrics.measurement import Measurement
 from generative_ai_toolkit.test import AgentLike, Case
 from generative_ai_toolkit.tracer.tracer import Trace
 from generative_ai_toolkit.utils.interactive import is_notebook
-import generative_ai_toolkit.server.server
+from generative_ai_toolkit.ui import measurements_ui
 from dataclasses import dataclass, field
 
 
@@ -190,92 +181,22 @@ class GenerativeAIToolkit(GenAIToolkit_):
     and evaluate model performance on given datasets and metrics.
     """
 
-    _server_process = None
-
-    @staticmethod
-    def is_port_in_use(port: int):
-        """
-        Check if a port is in use.
-        """
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            return sock.connect_ex(("127.0.0.1", port)) == 0
-
-    @staticmethod
-    def get_pid_on_port(port: int):
-        """
-        Get the PID of the process using the specified port.
-        """
-        try:
-            result = subprocess.run(
-                ["lsof", "-i", f":{port}"], capture_output=True, text=True
-            )
-            for line in result.stdout.splitlines():
-                if "LISTEN" in line:
-                    return int(line.split()[1])
-        except Exception as e:
-            print(f"Failed to get PID on port {port}: {e}")
-        return None
+    _demo = None
 
     @staticmethod
     def stop_ui():
-        """
-        Stop the FastAPI server.
-        """
-        pid = GenerativeAIToolkit.get_pid_on_port(8000)
-        if pid:
-            try:
-                os.kill(pid, signal.SIGTERM)
-                print(f"Successfully killed process {pid} on port 8000.")
-            except Exception as e:
-                print(f"Failed to kill process {pid} on port 8000: {e}")
-        else:
-            print("No server is running on port 8000.")
+        if GenerativeAIToolkit._demo:
+            GenerativeAIToolkit._demo.close()
 
     @staticmethod
-    def start_ui(measurements: Iterable[ConversationMeasurements] | None = None):
-        if GenerativeAIToolkit.is_port_in_use(8000):
-            print(
-                "Port 8000 is already in use. Attempting to stop any existing server."
-            )
-            GenerativeAIToolkit.stop_ui()
-
-        if not GenerativeAIToolkit.is_port_in_use(8000):
-
-            def run_uvicorn():
-                server_path = generative_ai_toolkit.server.server.__file__
-                GenerativeAIToolkit._server_process = subprocess.Popen(
-                    ["python", server_path]
-                )
-
-            threading.Thread(target=run_uvicorn).start()
-            time.sleep(2)
-            if GenerativeAIToolkit.is_port_in_use(8000):
-                print("Server started successfully.")
-            else:
-                print("Failed to start the server.")
-
-        if measurements:
-            try:
-                # nosemgrep: python.lang.security.audit.insecure-transport.urllib.insecure-request-object.insecure-request-object
-                url = "http://127.0.0.1:8000/conversation_measurements"
-                headers = {"Content-Type": "application/json"}
-                data = json.dumps(
-                    list(measurements),
-                    default=ConversationMeasurements.json_encoder,
-                ).encode("utf-8")
-                # nosemgrep: python.lang.security.audit.insecure-transport.urllib.insecure-request-object.insecure-request-object
-                req = urllib.request.Request(
-                    url, data=data, headers=headers, method="POST"
-                )
-                # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-                with urllib.request.urlopen(req) as response:
-                    if response.status == 200:
-                        print("Traces sent successfully.")
-                        webbrowser.open("http://127.0.0.1:8000/ui")
-                    else:
-                        print(f"Failed to send traces: {response.status_code}")
-            except Exception as e:
-                print(f"Error sending traces: {e}")
+    def start_ui(
+        measurements: Iterable[ConversationMeasurements],
+        prevent_thread_lock=True,
+        share=False,
+    ):
+        demo = measurements_ui(measurements)
+        GenerativeAIToolkit._demo = demo
+        demo.launch(prevent_thread_lock=prevent_thread_lock, share=share, quiet=True)
 
     @staticmethod
     def eval(

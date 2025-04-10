@@ -95,5 +95,8 @@ class AgentResponseConcisenessMetric(BaseMetric):
         return Measurement(
             name="Conciseness",
             value=response["score"],
-            additional_info=response["reasoning"],
+            additional_info={
+                "reasoning": response["reasoning"],
+                "conversation": user_conversation,
+            },
         )

@@ -51,7 +51,9 @@ class MockBedrockConverse:
         self, **kwargs: Unpack[ConverseRequestRequestTypeDef]
     ) -> NonStreamingResponse:
         if len(self.trajectory) == 0:
-            raise Exception("No more response to provide in mock trajectory")
+            raise Exception(
+                f"No more response to provide in mock trajectory. Last message: {kwargs.get("messages", [])[-1]}"
+            )
         response, *self.trajectory = self.trajectory
         if response == "RealResponse":
             response = cast(NonStreamingResponse, self.real_client.converse(**kwargs))

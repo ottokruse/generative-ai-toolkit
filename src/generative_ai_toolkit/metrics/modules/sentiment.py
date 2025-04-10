@@ -78,7 +78,10 @@ class SentimentMetric(BaseMetric):
 
         # Initialize variables
         validation_passed = True
-        additional_info = {}
+        additional_info: dict = {
+            "request": last_user_message,
+            "response": last_agent_message,
+        }
         overall_value = 0.0
 
         #####

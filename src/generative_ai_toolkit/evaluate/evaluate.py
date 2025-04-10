@@ -45,7 +45,10 @@ from generative_ai_toolkit.utils.ulid import Ulid
 @dataclass
 class ConversationMeasurements:
     conversation_id: str
-    case: Case | None
+    case: Case | None = None
+    case_nr: int | None = None
+    permutation_nr: int | None = None
+    run_nr: int | None = None
     traces: list["TraceMeasurements"] = field(default_factory=list)
     measurements: list["Measurement"] = field(default_factory=list)
 
@@ -151,9 +154,19 @@ class GenerativeAIToolkit:
 
             conversation_id, case = get_conversation_metadata(conversation_traces)
 
+            first_trace = conversation_traces[0]
+            case_nr = permutation_nr = run_nr = None
+            if isinstance(first_trace, CaseTrace):
+                case_nr = first_trace.case_nr
+                permutation_nr = first_trace.permutation_nr
+                run_nr = first_trace.run_nr
+
             conversation_measurements = ConversationMeasurements(
                 conversation_id=conversation_id,
                 case=case,
+                case_nr=case_nr,
+                permutation_nr=permutation_nr,
+                run_nr=run_nr,
             )
 
             # Start running metrics for conversations (sequence of traces)

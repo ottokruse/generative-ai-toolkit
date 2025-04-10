@@ -112,5 +112,9 @@ class ConversationExpectationMetric(BaseMetric):
         return Measurement(
             name="Correctness",
             value=response["score"],
-            additional_info=response["reasoning"],
+            additional_info={
+                "conversation": user_conversation,
+                "expectations": expectations,
+                "reasoning": response["reasoning"],
+            },
         )
