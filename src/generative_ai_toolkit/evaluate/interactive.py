@@ -97,7 +97,7 @@ class EnhancedEvalResult:
                     elif measurement.validation_passed is False:
                         aggregated_counts[permutation_as_key].nr_failed += 1
 
-        data = []
+        summary_data = []
         for permutation_as_key, counts_per_permutation in aggregated_counts.items():
             measurement_averages: dict[str, list] = defaultdict(list)
             for measurement in counts_per_permutation.measurements:
@@ -122,9 +122,9 @@ class EnhancedEvalResult:
                 "Total Nr Passed": counts_per_permutation.nr_passed,
                 "Total Nr Failed": counts_per_permutation.nr_failed,
             }
-            data.append(row)
+            summary_data.append(row)
 
-        df = pd.DataFrame(data).sort_index(
+        summary_df = pd.DataFrame(summary_data).sort_index(
             axis=1,
             key=lambda index: index.map(
                 lambda column_name: (
@@ -138,11 +138,11 @@ class EnhancedEvalResult:
             ),
         )
         if is_notebook():
-            display(df)
+            display(summary_df)
         else:
-            print(tabulate(data, headers="keys", tablefmt="pretty"))
+            print(tabulate(summary_data, headers="keys", tablefmt="pretty"))
 
-        return df
+        return summary_df
 
     def __iter__(self):
         if isinstance(self.conversation_measurements, list):
