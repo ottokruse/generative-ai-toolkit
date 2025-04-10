@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "generative-ai-toolkit"
-version = "0.3.0"
+version = "0.4.0"
 description = "Toolkit to support developers in building and operating high quality LLM-based applications"
 keywords = ["generative-ai-toolkit", "generative-ai", "gen-ai", "agent", "llm", "testing"]
 readme = "README.md"
@@ -16,6 +16,7 @@ dependencies = [
 authors = [
   {name = "Otto Kruse", email = "ottokrus@amazon.nl"},
   {name = "Ryan French", email = "ryanjfre@amazon.co.uk"},
+  {name = "Mihai Radulescu Kobler", email = "kobler@amazon.de"},
   {name = "Rui Costa", email = "ruicos@amazon.com"},
 ]
 
@@ -38,6 +39,7 @@ evaluate = [
 interactive = [
     "flask~=3.1.0",
     "gunicorn~=23.0.0",
+    "gradio~=5.23.3",
     "jsonpickle~=3.2.2",
     "pandas~=2.2.2",
     "requests~=2.32.3",
@@ -48,9 +50,9 @@ dev = [
 ]
 all = [
     "boto3-stubs[bedrock-runtime,dynamodb]~=1.35.2",
-    "fastapi~=0.112.0",
     "flask~=3.1.0",
     "gunicorn~=23.0.0",
+    "gradio~=5.23.3",
     "jsonpickle~=3.2.2",
     "nltk~=3.9.1",
     "opentelemetry-proto~=1.31.1",
