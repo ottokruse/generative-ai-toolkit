@@ -49,7 +49,7 @@ In addition to the cookiecutter template and basic instructions, we are providin
 
 For instance, if you’re interested in generating SQL queries from natural language inputs, refer to the **text-to-sql** notebook in `examples/text_to_sql.ipynb` which includes the Generative AI Toolkit Web UI:
 
-<img src="./assets/images/generative-ai-toolkit-webui-detail.png" alt="UI Overview Screenshot" title="UI Overview Screenshot" width="1200"/>
+<img src="./assets/images/ui-measurements-overview.png" alt="UI Measurements Overview Screenshot" title="UI Measurements Overview" width="1200"/>
 
 These examples serve as practical guides and starting points for integrating the toolkit into your own workflows. Feel free to adapt and extend them to suit your specific application needs.
 
@@ -1116,13 +1116,11 @@ The Generative AI Toolkit provides a local, web-based user interface (UI) to hel
 
 Below are two example screenshots of the UI in action:
 
-<img src="./assets/images/generative-ai-toolkit-webui-dashboard.png" alt="UI Overview Screenshot" title="UI Overview Screenshot" width="1200"/>
+_In this screenshot, you can see multiple conversations along with their metrics and pass/fail status. Clicking the View button for a conversation reveals its detailed traces and metrics:_
+<img src="./assets/images/ui-measurements-overview.png" alt="UI Measurements Overview Screenshot" title="UI Measurements Overview" width="1200"/>
 
-_In this screenshot, you can see multiple conversations along with their metrics and pass/fail status. Clicking on a conversation reveals its detailed traces and metrics._
-
-<img src="./assets/images/generative-ai-toolkit-webui-detail.png" alt="UI Overview Screenshot" title="UI Overview Screenshot" width="1200"/>
-
-_Here, a single conversation’s full trace is displayed. You can see user queries, agent responses, any tool calls made, and evaluation details like latency and cost. This view helps you understand how and why the agent produced its final answer._
+_Here, a single conversation’s full trace is displayed. You can see user queries, agent responses, any tool calls made, and evaluation details like latency and cost. This view helps you understand how and why the agent produced its final answer:_
+<img src="./assets/images/ui-conversation.png" alt="UI Conversation Display Screenshot" title="UI Conversation Display" width="1200"/>
 
 **How to Launch the UI:**
 
@@ -1132,7 +1130,7 @@ After generating and evaluating traces, start the UI by calling:
 results.start_ui()
 ```
 
-This command runs a local web server (often at http://localhost:8000) where you can interact with the web UI. When you have finished inspecting your conversations and metrics, you can shut down the UI by running:
+This command runs a local web server (at http://localhost:7860) where you can interact with the web UI. When you have finished inspecting your conversations and metrics, you can shut down the UI by running:
 
 ```python
 results.stop_ui()
