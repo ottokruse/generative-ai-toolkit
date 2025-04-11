@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "generative-ai-toolkit"
-version = "0.4.0"
+version = "0.4.1"
 description = "Toolkit to support developers in building and operating high quality LLM-based applications"
 keywords = ["generative-ai-toolkit", "generative-ai", "gen-ai", "agent", "llm", "testing"]
 readme = "README.md"
@@ -40,6 +40,7 @@ interactive = [
     "flask~=3.1.0",
     "gunicorn~=23.0.0",
     "gradio~=5.23.3",
+    "ipython~=8.30.0",
     "jsonpickle~=3.2.2",
     "pandas~=2.2.2",
     "requests~=2.32.3",
@@ -53,6 +54,7 @@ all = [
     "flask~=3.1.0",
     "gunicorn~=23.0.0",
     "gradio~=5.23.3",
+    "ipython~=8.30.0",
     "jsonpickle~=3.2.2",
     "nltk~=3.9.1",
     "opentelemetry-proto~=1.31.1",
