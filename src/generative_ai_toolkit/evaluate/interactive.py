@@ -47,8 +47,19 @@ class EnhancedEvalResult:
         ) = conversation_measurements
         self.traces = traces
 
-    def start_ui(self):
-        GenerativeAIToolkit.start_ui(self.conversation_measurements)
+    def start_ui(
+        self,
+        *,
+        prevent_thread_lock=True,
+        share=False,
+        **kwargs,
+    ):
+        GenerativeAIToolkit.start_ui(
+            self.conversation_measurements,
+            prevent_thread_lock=prevent_thread_lock,
+            share=share,
+            **kwargs,
+        )
 
     def stop_ui(self):
         GenerativeAIToolkit.stop_ui()
@@ -184,19 +195,22 @@ class GenerativeAIToolkit(GenAIToolkit_):
     _demo = None
 
     @staticmethod
-    def stop_ui():
+    def stop_ui(verbose: bool = True):
         if GenerativeAIToolkit._demo:
-            GenerativeAIToolkit._demo.close()
+            GenerativeAIToolkit._demo.close(verbose=verbose)
 
     @staticmethod
     def start_ui(
         measurements: Iterable[ConversationMeasurements],
+        *,
         prevent_thread_lock=True,
         share=False,
+        **kwargs,
     ):
         demo = measurements_ui(measurements)
         GenerativeAIToolkit._demo = demo
-        demo.launch(prevent_thread_lock=prevent_thread_lock, share=share, quiet=True)
+        demo.launch(prevent_thread_lock=prevent_thread_lock, share=share, **kwargs)
+        return demo
 
     @staticmethod
     def eval(
