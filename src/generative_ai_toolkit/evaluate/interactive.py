@@ -57,6 +57,32 @@ class EnhancedEvalResult:
     def summary(self):
         return self.summary_for(self)
 
+    def details(self):
+        """
+        Represent all measurements in a flattened pandas DataFrame, with these columns:
+
+        - measurement_name
+        - measurement_value
+        - measurement_unit
+        - measurement_validation_passed
+        - conversation_id
+        - trace_id (for measurements at Trace level)
+        - span_id (for measurements at Trace level)
+        - span_name (for measurements at Trace level)
+        - ai_trace_type (for measurements at Trace level)
+        - peer_service (for measurements at Trace level)
+        - case_name (for measurements created as part of a Case)
+        - case_nr (for measurements created as part of a Case)
+        - permutation_nr (for measurements created as part of a Case)
+        - run_nr (for measurements created as part of a Case)
+
+        Additionally, for each key-value of the permutation, a column is added with key as column name, and the value as value.
+        """
+        return pd.concat(
+            (m.as_dataframe() for m in self),
+            ignore_index=True,
+        )
+
     @staticmethod
     def summary_for(conversations: Iterable[ConversationMeasurements]):
         @dataclass

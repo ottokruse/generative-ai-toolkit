@@ -47,6 +47,7 @@ class ConversationMeasurements:
     conversation_id: str
     case: Case | None = None
     case_nr: int | None = None
+    permutation: Mapping[str, Any] | None = None
     permutation_nr: int | None = None
     run_nr: int | None = None
     traces: list["TraceMeasurements"] = field(default_factory=list)
@@ -64,6 +65,75 @@ class ConversationMeasurements:
             return o.isoformat()
         elif isinstance(o, Enum):
             return o.value
+
+    def as_dataframe(self):
+        """
+        Represent all measurements in a flattened pandas DataFrame, with these columns:
+
+        - measurement_name
+        - measurement_value
+        - measurement_unit
+        - measurement_validation_passed
+        - conversation_id
+        - trace_id (for measurements at Trace level)
+        - span_id (for measurements at Trace level)
+        - span_name (for measurements at Trace level)
+        - ai_trace_type (for measurements at Trace level)
+        - peer_service (for measurements at Trace level)
+        - case_name (for measurements created as part of a Case)
+        - case_nr (for measurements created as part of a Case)
+        - permutation_nr (for measurements created as part of a Case)
+        - run_nr (for measurements created as part of a Case)
+
+        Additionally, for each key-value of the permutation, a column is added with key as column name, and the value as value.
+        """
+        import pandas as pd
+
+        data = []
+        for measurement in self.measurements:
+            row = {
+                "measurement_name": measurement.name,
+                "measurement_value": measurement.value,
+                "measurement_unit": measurement.unit,
+                "measurement_validation_passed": measurement.validation_passed,
+                "conversation_id": self.conversation_id,
+                "trace_id": None,
+                "span_id": None,
+                "span_name": None,
+                "ai_trace_type": None,
+                "peer_service": None,
+                "case_name": self.case.name if self.case else None,
+                "case_nr": self.case_nr,
+                "permutation_nr": self.permutation_nr,
+                "run_nr": self.run_nr,
+            }
+            if self.permutation:
+                row.update(self.permutation)
+            data.append(row)
+
+        for trace in self.traces:
+            for measurement in trace.measurements:
+                row = {
+                    "measurement_name": measurement.name,
+                    "measurement_value": measurement.value,
+                    "measurement_unit": measurement.unit,
+                    "measurement_validation_passed": measurement.validation_passed,
+                    "conversation_id": self.conversation_id,
+                    "trace_id": trace.trace.trace_id,
+                    "span_id": trace.trace.span_id,
+                    "span_name": trace.trace.span_name,
+                    "ai_trace_type": trace.trace.attributes.get("ai.trace.type"),
+                    "peer_service": trace.trace.attributes.get("peer.service"),
+                    "case_name": self.case.name if self.case else None,
+                    "case_nr": self.case_nr,
+                    "permutation_nr": self.permutation_nr,
+                    "run_nr": self.run_nr,
+                }
+                if self.permutation:
+                    row.update(self.permutation)
+                data.append(row)
+
+        return pd.DataFrame(data)
 
 
 @dataclass
@@ -155,9 +225,10 @@ class GenerativeAIToolkit:
             conversation_id, case = get_conversation_metadata(conversation_traces)
 
             first_trace = conversation_traces[0]
-            case_nr = permutation_nr = run_nr = None
+            case_nr = permutation = permutation_nr = run_nr = None
             if isinstance(first_trace, CaseTrace):
                 case_nr = first_trace.case_nr
+                permutation = first_trace.permutation
                 permutation_nr = first_trace.permutation_nr
                 run_nr = first_trace.run_nr
 
@@ -165,6 +236,7 @@ class GenerativeAIToolkit:
                 conversation_id=conversation_id,
                 case=case,
                 case_nr=case_nr,
+                permutation=permutation,
                 permutation_nr=permutation_nr,
                 run_nr=run_nr,
             )
@@ -318,10 +390,10 @@ class GenerativeAIToolkit:
             print(
                 f"Submitted trace generation for {nr_conversations} conversations ({len(parameter_permutations)} permutations, {len(cases)} cases, {nr_runs_per_case} runs per case)"
             )
-            for future in as_completed(futures):
+            for fut_nr, future in enumerate(as_completed(futures)):
                 info = futures[future]
                 print(
-                    f"Done generating traces for case {info.case_nr} run {info.run_nr} permutation {info.permutation_nr}"
+                    f"Done generating traces for case {info.case_nr} run {info.run_nr} permutation {info.permutation_nr} ({fut_nr+1}/{len(futures)})"
                 )
                 yield future.result()
 
