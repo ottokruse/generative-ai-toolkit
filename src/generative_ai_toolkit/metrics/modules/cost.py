@@ -74,7 +74,6 @@ class CostMetric(BaseMetric):
             ),
             additional_info={
                 "cost_threshold": self.cost_threshold,
-                "cost": cost,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "per_token": per_token,

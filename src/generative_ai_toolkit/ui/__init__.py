@@ -46,7 +46,9 @@ class TraceSummary:
     tool_invocations: list[Trace] = field(default_factory=list)
     all_traces: list[Trace] = field(default_factory=list)
     user_conversation: list[ConversationMessage] = field(default_factory=list)
-    measurements_per_trace: dict[str, list[Measurement]] = field(default_factory=dict)
+    measurements_per_trace: dict[tuple[str, str], list[Measurement]] = field(
+        default_factory=dict
+    )
 
 
 def get_traces_summaries(traces: Sequence[Trace]):
@@ -283,7 +285,9 @@ def chat_messages_from_trace_summary(
 
         if not include_measurements:
             continue
-        for measurement in summary.measurements_per_trace.get(trace.trace_id, []):
+        for measurement in summary.measurements_per_trace.get(
+            (trace.trace_id, trace.span_id), []
+        ):
             metadata: MetadataDict = {
                 "title": f"Measurement: {measurement.name}{" [NOK]" if measurement.validation_passed is False else ""}",
                 "parent_id": trace.span_id,
@@ -339,7 +343,8 @@ def chat_messages_from_conversation_measurements(
     summaries = get_traces_summaries([m.trace for m in conv_measurements.traces])
     for summary in summaries:
         summary.measurements_per_trace = {
-            m.trace.trace_id: m.measurements[:] for m in conv_measurements.traces
+            (m.trace.trace_id, m.trace.span_id): m.measurements[:]
+            for m in conv_measurements.traces
         }
     conversations = set(tuple([s.conversation_id, s.auth_context]) for s in summaries)
     if len(conversations) > 1:
@@ -580,6 +585,10 @@ def measurements_ui(
                 validation_ok = all(
                     m.validation_passed is not False
                     for m in conv_measurements.measurements
+                ) and all(
+                    m.validation_passed is not False
+                    for t in conv_measurements.traces
+                    for m in t.measurements
                 )
                 nr_measurements = len(conv_measurements.measurements) + sum(
                     len(t.measurements) for t in conv_measurements.traces
