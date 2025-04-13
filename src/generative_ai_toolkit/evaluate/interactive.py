@@ -46,23 +46,13 @@ class EnhancedEvalResult:
             Iterable[ConversationMeasurements] | list[ConversationMeasurements]
         ) = conversation_measurements
         self.traces = traces
+        self._ui = None
 
-    def start_ui(
-        self,
-        *,
-        prevent_thread_lock=True,
-        share=False,
-        **kwargs,
-    ):
-        GenerativeAIToolkit.start_ui(
-            self.conversation_measurements,
-            prevent_thread_lock=prevent_thread_lock,
-            share=share,
-            **kwargs,
-        )
-
-    def stop_ui(self):
-        GenerativeAIToolkit.stop_ui()
+    @property
+    def ui(self):
+        if not self._ui:
+            self._ui = measurements_ui(self.conversation_measurements)
+        return self._ui
 
     def summary(self):
         return self.summary_for(self)
@@ -191,26 +181,6 @@ class GenerativeAIToolkit(GenAIToolkit_):
     This class provides static methods to generate text based on a given prompt
     and evaluate model performance on given datasets and metrics.
     """
-
-    _demo = None
-
-    @staticmethod
-    def stop_ui(verbose: bool = True):
-        if GenerativeAIToolkit._demo:
-            GenerativeAIToolkit._demo.close(verbose=verbose)
-
-    @staticmethod
-    def start_ui(
-        measurements: Iterable[ConversationMeasurements],
-        *,
-        prevent_thread_lock=True,
-        share=False,
-        **kwargs,
-    ):
-        demo = measurements_ui(measurements)
-        GenerativeAIToolkit._demo = demo
-        demo.launch(prevent_thread_lock=prevent_thread_lock, share=share, **kwargs)
-        return demo
 
     @staticmethod
     def eval(
