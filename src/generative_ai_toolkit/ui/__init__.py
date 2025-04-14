@@ -24,10 +24,6 @@ from generative_ai_toolkit.tracer.trace import Trace
 from generative_ai_toolkit.evaluate.evaluate import ConversationMeasurements
 from generative_ai_toolkit.metrics.measurement import Measurement, Unit
 
-from generative_ai_toolkit.test import (
-    user_conversation_from_trace,
-    ConversationMessage,
-)
 import gradio as gr
 from gradio.components.chatbot import MetadataDict
 
@@ -42,16 +38,13 @@ class TraceSummary:
     auth_context: str | None = None
     user_input: str = ""
     agent_response: str = ""
-    llm_invocations: list[Trace] = field(default_factory=list)
-    tool_invocations: list[Trace] = field(default_factory=list)
     all_traces: list[Trace] = field(default_factory=list)
-    user_conversation: list[ConversationMessage] = field(default_factory=list)
     measurements_per_trace: dict[tuple[str, str], list[Measurement]] = field(
         default_factory=dict
     )
 
 
-def get_traces_summaries(traces: Sequence[Trace]):
+def get_summaries_for_traces(traces: Sequence[Trace]):
     trace_summaries: list[TraceSummary] = []
     by_start_date = sorted(traces, key=lambda t: t.started_at)
     by_trace_id = sorted(by_start_date, key=lambda t: t.trace_id)
@@ -66,35 +59,33 @@ def get_traces_summaries(traces: Sequence[Trace]):
             span_id=root_trace.span_id,
             duration_ms=root_trace.duration_ms,
             started_at=root_trace.started_at,
+            all_traces=traces_for_trace_id,
         )
-        for trace in reversed(traces_for_trace_id):
+
+        # Find (first) user input:
+        for trace in traces_for_trace_id:
             if not summary.user_input and "ai.user.input" in trace.attributes:
                 summary.user_input = trace.attributes["ai.user.input"]
+
+        # Find (last) agent response:
+        for trace in reversed(traces_for_trace_id):
             if not summary.agent_response and "ai.agent.response" in trace.attributes:
                 summary.agent_response = trace.attributes["ai.agent.response"]
-            if trace.attributes.get("ai.trace.type") == "tool-invocation":
-                summary.tool_invocations.append(trace)
-            elif trace.attributes.get("ai.trace.type") == "llm-invocation":
-                summary.llm_invocations.append(trace)
-            if (
-                not summary.user_conversation
-                and trace.attributes.get("ai.trace.type") == "llm-invocation"
-            ):
-                summary.user_conversation = user_conversation_from_trace(trace)
-            summary.all_traces.append(trace)
 
-        summary.tool_invocations = sorted(
-            summary.tool_invocations, key=lambda t: t.started_at
-        )
-        summary.llm_invocations = sorted(
-            summary.llm_invocations, key=lambda t: t.started_at
-        )
-        summary.all_traces = sorted(
-            summary.all_traces,
-            key=lambda t: t.started_at,
-        )
         trace_summaries.append(summary)
     return sorted(trace_summaries, key=lambda t: t.started_at)
+
+
+def get_summaries_for_conversation_measurements(
+    conv_measurements: ConversationMeasurements,
+):
+    summaries = get_summaries_for_traces([t.trace for t in conv_measurements.traces])
+    for summary in summaries:
+        summary.measurements_per_trace = {
+            (m.trace.trace_id, m.trace.span_id): m.measurements[:]
+            for m in conv_measurements.traces
+        }
+    return summaries
 
 
 def get_markdown_for_tool_invocation(tool_trace: Trace):
@@ -319,7 +310,7 @@ def chat_messages_from_traces(
     traces: Iterable[Trace],
     show_all_traces=False,
 ):
-    summaries = get_traces_summaries(list(traces))
+    summaries = get_summaries_for_traces(list(traces))
     conversations = set(tuple([s.conversation_id, s.auth_context]) for s in summaries)
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")
@@ -340,12 +331,7 @@ def chat_messages_from_conversation_measurements(
     show_all_traces=False,
     show_measurements=False,
 ):
-    summaries = get_traces_summaries([m.trace for m in conv_measurements.traces])
-    for summary in summaries:
-        summary.measurements_per_trace = {
-            (m.trace.trace_id, m.trace.span_id): m.measurements[:]
-            for m in conv_measurements.traces
-        }
+    summaries = get_summaries_for_conversation_measurements(conv_measurements)
     conversations = set(tuple([s.conversation_id, s.auth_context]) for s in summaries)
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")
