@@ -4,10 +4,13 @@ The **Generative AI Toolkit** is a lightweight library that covers the life cycl
 
 The Generative AI Toolkit makes it easy to measure and test the performance of LLM-based applications, during development as well as in production. Measurements and test results can be integrated seamlessly with Amazon CloudWatch Metrics.
 
-The toolkit builds upon principles and methodologies detailed in our research paper:  
+The toolkit builds upon principles and methodologies detailed in our research paper:
+
 **[GENERATIVE AI TOOLKIT- A FRAMEWORK FOR INCREASING THE QUALITY OF LLM-BASED APPLICATIONS OVER THEIR WHOLE LIFE CYCLE](https://arxiv.org/abs/2412.14215)**.
 
-## Architecture
+## Reference Architecture
+
+The following is a reference architecture for a setup that uses the Generative AI Toolkit to implement an agent, collect traces, and run automated evaluation. The resulting metrics are fed back to the agent's developers via dashboards and alerts. Metrics are calculated and captured continuously, as real users interact with the agent, thereby giving the agent's developers insight into how the agent is performing at all times, allowing for continuous improvement:
 
 <img src="./assets/images/architecture.drawio.png" alt="Architecture" width="1200" />
 
@@ -15,7 +18,7 @@ The toolkit builds upon principles and methodologies detailed in our research pa
 
 To fully utilize the Generative AI Toolkit, it’s essential to understand the following key terms:
 
-- **Traces**: Traces are records of interactions between the user and the LLM or tools. They capture the entire request-response cycle, including input prompts, model outputs, tool calls, and metadata such as latency, token usage, and execution details. Traces form the foundation for evaluating an LLM-based application's behavior and performance.
+- **Traces**: Traces are records of the internal operations of you LLM-based application, e.g. LLM invocations and tool invocations. Traces capture the entire request-response cycle, including input prompts, model outputs, tool calls, and metadata such as latency, token usage, and execution details. Traces form the foundation for evaluating an LLM-based application's behavior and performance.
 
 - **Metrics**: Metrics are measurements derived from traces that evaluate various aspects of an LLM-based application's performance. Examples include latency, token usage, similarity with expected responses, sentiment, and cost. Metrics can be customized to measure specific behaviors or to enforce validation rules.
 
@@ -31,63 +34,7 @@ To fully utilize the Generative AI Toolkit, it’s essential to understand the f
 
 - **Web UI**: A local web-based interface that allows developers to inspect traces, debug conversations, and view evaluation results interactively. This is particularly useful for identifying and resolving issues in the agent's responses.
 
-## Getting started
-
-To get started, you can follow either of these paths:
-
-### Cookiecutter
-
-You can bootstrap an AWS CDK project with a vanilla agent using the **cookiecutter template**. This is the easiest and quickest way to get to a working agent that runs locally as well as on AWS and can be invoked over HTTPS, e.g. with `curl`. The vanilla agent is meant both as an example and as a starting point to your own development: we recommend you play with the vanilla agent and the included notebooks with sample code and explanations. You can then proceed to customize the agent and the metrics to your liking. Proceed to [1.0 Cookiecutter template](#10-cookiecutter-template).
-
-### Generative AI Toolkit Library
-
-You can install the `generative_ai_toolkit` and explore how to create reliable LLM-based applications (such as agents) with it in an IPython notebook or interactive Python shell. Proceed to [2.0 Generative AI Toolkit](#20-generative-ai-toolkit).
-
-### Examples
-
-In addition to the cookiecutter template and basic instructions, we are providing a collection of example notebooks in the `examples` folder.
-
-For instance, if you’re interested in generating SQL queries from natural language inputs, refer to the **text-to-sql** notebook in `examples/text_to_sql.ipynb` which includes the Generative AI Toolkit Web UI:
-
-<img src="./assets/images/ui-measurements-overview.png" alt="UI Measurements Overview Screenshot" title="UI Measurements Overview" width="1200"/>
-
-These examples serve as practical guides and starting points for integrating the toolkit into your own workflows. Feel free to adapt and extend them to suit your specific application needs.
-
-## 1.0 Cookiecutter template
-
-The cookiecutter template in this repository will create a new Generative AI Toolkit project for you: an AWS CDK project that implements the [architecture depicted above](#architecture), with sample code and a notebook with explanations, and a vanilla agent onboard that you can customize to your liking.
-
-#### Prereqs
-
-- Install [cookiecutter](https://www.cookiecutter.io/), e.g. with: `pipx install cookiecutter`
-- Install [uv](https://github.com/astral-sh/uv) (the cookiecutter template uses `uv` to install Python dependencies; basically as a faster `pip`)
-- Install [Node.js and NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) (for installing and using AWS CDK)
-- You need to have Python 3.12 or higher (can easily be installed with `uv`, e.g.: `uv python install 3.12`)
-
-#### Usage
-
-Use the cookiecutter template to create the new project. Follow the prompts to create a new folder with everything you need to get started in it, amongst which a vanilla agent that you can deploy as-is or customize:
-
-```shell
-cookiecutter https://github.com/awslabs/generative-ai-toolkit
-```
-
-After this you can simply deploy your agent with `cdk deploy` and test it with the `test_function_url.sh` script. Follow the `README.md` in your new project folder for more details.
-
-##### Using the `uv` virtual environment in a Jupyter notebook (e.g. in an Amazon SageMaker notebook)
-
-The cookiecutter template uses `uv` to create a Python virtual environment. Add this virtual environment to the Jupyter kernel registry as follows:
-
-```shell
-# run this in the directory that was created by applying the cookiecutter template, i.e. where the .venv folder is
-uv run python -m ipykernel install --user --name=uvvenv --display-name "Python (uvvenv)"
-```
-
-After that you should be able to select this kernel in your Jupyter notebook.
-
-## 2.0 Generative AI Toolkit
-
-#### Table of Contents
+## Table of Contents
 
 2.1 [Installation](#21-installation)  
 2.2 [Agent Implementation](#22-agent-implementation)  
@@ -105,8 +52,15 @@ After that you should be able to select this kernel in your Jupyter notebook.
 Install `generative_ai_toolkit` with support for all features, amongst which interactive evaluation of metrics:
 
 ```bash
-pip install "generative-ai-toolkit[all]"
+pip install "generative-ai-toolkit[all]"  # Note the [all] modifier
 ```
+
+If you don't use the `[all]` installation modifier, only the minimal set of dependencies will be included that you'll need for creating an agent.
+
+Other available modifiers are:
+
+- `[run-agent]`: includes dependencies such as `gunicorn` that allow you to use `generative_ai_toolkit.run.agent.Runner` to expose your agent over HTTP.
+- `[evaluate]`: includes dependencies that allow you to run evaluations against traces.
 
 ### 2.2 Agent implementation
 
@@ -125,8 +79,6 @@ agent = BedrockConverseAgent(
     model_id="anthropic.claude-3-sonnet-20240229-v1:0",
 )
 ```
-
-That's it. You now have an agent you can chat with.
 
 Obviously right now this agent doesn't have any tools yet (we'll add some shortly), but you can already chat with it.
 
@@ -277,7 +229,36 @@ print(response) # Okay, let me check the current weather report for Amsterdam us
 
 Note that this does not force the agent to use the provided tools, it merely makes them available for the agent to use.
 
-### X.X Unified Trace Model
+### 2.3 Tracing
+
+You can make `BedrockConverseAgent` log traces of the LLM and tool calls it performs, by providing a tracer class, such as the `InMemoryAgentTracer`, or the `DynamoDbAgentTracer` that logs traces to DynamoDB:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.conversation_history import DynamoDbConversationHistory
+from generative_ai_toolkit.tracer import DynamoDbAgentTracer # Import tracer
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    conversation_history=DynamoDbConversationHistory(table_name="conversations"),
+    tracer=DynamoDbAgentTracer(table_name="traces"), # Add tracer, this table needs to exist, with string keys "pk" and "sk"
+)
+```
+
+Now, when you `converse()` with the agent, and the agent calls the LLM and tools, it will log traces. You can inspect these traces in the AWS console or programmatically like so:
+
+```python
+agent.converse("What's the capital of France?")
+print(agent.traces) # Prints the traces. In this example it would be just one trace of the LLM call
+```
+
+#### Open Telemetry
+
+Traces use the [OpenTelemetry "Span" model](https://opentelemetry.io/docs/specs/otel/trace/api/#span). That model works at high level by assigning a unique Trace ID to each incoming request (e.g. over HTTP). All actions that are taken while executing that request, are recorded as "span" and will have a unique Span ID. Span name, start timestamp, end timestamp, are recorded at span level.
+
+So, for example, when a user sends a message to an agent, that will start a trace. For every action the agent takes, a span is recorded. All these spans share the same trace ID, but have a unique span ID. If the agent invokes an LLM or tool, that is recorded as a span. When the agent returns the response to the user, the trace ends, and multiple spans will have been recorded.
+
+In the OpenTelemetry Span model, information such as "the model ID used for the LLM invocation" must be added to a span as attributes. The Generative AI Toolkit uses the following span attributes:
 
 | Attribute Name                           | Description                                                                                                                                                                                       |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -306,43 +287,6 @@ Note that this does not force the agent to use the provided tools, it merely mak
 | `ai.llm.response.error`                  | Error information if the LLM request fails                                                                                                                                                        |
 | `ai.agent.response`                      | The final concatenated response from the agent                                                                                                                                                    |
 | `service.name`                           | Name of the service, set to the class name of the agent                                                                                                                                           |
-
-### 2.3 Tracing
-
-You can make `BedrockConverseAgent` log traces of the LLM and tool calls it performs, by providing a tracer class, such as the `InMemoryAgentTracer`, or the `DynamoDbAgentTracer` that logs traces to DynamoDB:
-
-```python
-from generative_ai_toolkit.agent import BedrockConverseAgent
-from generative_ai_toolkit.conversation_history import DynamoDbConversationHistory
-from generative_ai_toolkit.tracer import DynamoDbAgentTracer # Import tracer
-
-agent = BedrockConverseAgent(
-    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
-    conversation_history=DynamoDbConversationHistory(table_name="conversations"),
-    tracer=DynamoDbAgentTracer(table_name="traces"), # Add tracer, this table needs to exist, with string keys "pk" and "sk"
-)
-```
-
-Now, when you `converse()` with the agent, and the agent calls the LLM and tools, it will log traces. You can inspect these traces in the AWS console or programmatically like so:
-
-```python
-agent.converse("What's the capital of France?")
-print(agent.traces) # Prints the traces. In this example it would be just one trace of the LLM call
-```
-
-Traces can be of type `LLmTrace` or `ToolTrace`.
-
-This is an example of an `LlmTrace`. As you can see it has the full detail of the call to the LLM, e.g. inputs, outputs, latency, nr of tokens, etc:
-
-```python
-LlmTrace(conversation_id='01J5DDQMC06ZEZKS5QPBAV4CYH', to='LLM', created_at=datetime.datetime(2024, 8, 16, 11, 4, 1, 152411, tzinfo=datetime.timezone.utc), request={'messages': [{'content': [{'text': "What's the capital of France?"}], 'role': 'user'}], 'system': [{'text': 'You are a helpful agent'}], 'modelId': 'anthropic.claude-3-sonnet-20240229-v1:0', 'inferenceConfig': {}}, response={'output': {'message': {'content': [{'text': 'The capital of France is Paris.'}], 'role': 'assistant'}}, 'stopReason': 'end_turn', 'metrics': {'latencyMs': 409}, 'ResponseMetadata': {'HTTPHeaders': {'date': 'Fri, 16 Aug 2024 11:04:05 GMT', 'content-length': '212', 'content-type': 'application/json', 'connection': 'keep-alive', 'x-amzn-requestid': 'cb77b274-8786-447e-8446-e22a025adf0a'}, 'RequestId': 'cb77b274-8786-447e-8446-e22a025adf0a', 'HTTPStatusCode': 200, 'RetryAttempts': 0}, 'usage': {'outputTokens': 10, 'totalTokens': 29, 'inputTokens': 19}}, trace_id=Ulid('01J5DDQMC04C9J4SWGSK86HR3G'), additional_info={})
-```
-
-This is an example of a `ToolTrace`. As you can see it has the full detail of the call to the tool, e.g. inputs, outputs, latency, etc:
-
-```python
-ToolTrace(conversation_id='01J5DDQMC06ZEZKS5QPBAV4CYH', to='TOOL', request={'tool_name': 'bad_weather_report', 'tool_use_id': 'tooluse_pO8SQE5OT6O_VXy_P0XdDg', 'tool_input': {'city_name': 'Amsterdam'}}, response={'tool_response': {'tool_response': 'Rainy'}, 'latency_ms': 0}, created_at=datetime.datetime(2024, 8, 16, 11, 8, 35, 789444, tzinfo=datetime.timezone.utc), trace_id=Ulid('01J5DE00JDWDQQQ8TGQFJT61Z5'), additional_info={})
-```
 
 #### Viewing traces
 
