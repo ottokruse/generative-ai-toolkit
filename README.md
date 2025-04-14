@@ -18,7 +18,7 @@ The following is a reference architecture for a setup that uses the Generative A
 
 To fully utilize the Generative AI Toolkit, it’s essential to understand the following key terms:
 
-- **Traces**: Traces are records of the internal operations of you LLM-based application, e.g. LLM invocations and tool invocations. Traces capture the entire request-response cycle, including input prompts, model outputs, tool calls, and metadata such as latency, token usage, and execution details. Traces form the foundation for evaluating an LLM-based application's behavior and performance.
+- **Traces**: Traces are records of the internal operations of your LLM-based application, e.g. LLM invocations and tool invocations. Traces capture the entire request-response cycle, including input prompts, model outputs, tool calls, and metadata such as latency, token usage, and execution details. Traces form the foundation for evaluating an LLM-based application's behavior and performance.
 
 - **Metrics**: Metrics are measurements derived from traces that evaluate various aspects of an LLM-based application's performance. Examples include latency, token usage, similarity with expected responses, sentiment, and cost. Metrics can be customized to measure specific behaviors or to enforce validation rules.
 
@@ -256,7 +256,7 @@ print(agent.traces) # Prints the traces. In this example it would be just one tr
 
 Traces use the [OpenTelemetry "Span" model](https://opentelemetry.io/docs/specs/otel/trace/api/#span). That model works at high level by assigning a unique Trace ID to each incoming request (e.g. over HTTP). All actions that are taken while executing that request, are recorded as "span" and will have a unique Span ID. Span name, start timestamp, end timestamp, are recorded at span level.
 
-So, for example, when a user sends a message to an agent, that will start a trace. For every action the agent takes, a span is recorded. All these spans share the same trace ID, but have a unique span ID. If the agent invokes an LLM or tool, that is recorded as a span. When the agent returns the response to the user, the trace ends, and multiple spans will have been recorded.
+So, for example, when a user sends a message to an agent, that will start a trace. Then, for every action the agent takes to handle the user's request, a span is recorded. All these spans share the same trace ID, but have a unique span ID. For example, if the agent invokes an LLM or tool, that is recorded as a span. When the agent returns the response to the user, the trace ends, and multiple spans will have been recorded. Often, user and agent will have a conversation that includes multiple turns: the user gives the agent an instruction, the agent asks follow up questions or confirmation, the user gives additional directions, and so forth until the user's intent is fully achieved. Each back-and-forth between user and agent, i.e. each turn in the conversation, is a trace and will have a unique trace ID and (likely) include multiple spans.
 
 In the OpenTelemetry Span model, information such as "the model ID used for the LLM invocation" must be added to a span as attributes. The Generative AI Toolkit uses the following span attributes:
 
