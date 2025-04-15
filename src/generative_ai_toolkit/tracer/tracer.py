@@ -320,7 +320,7 @@ class StructuredLogsTracer(StreamTracer):
         self.logger = SimpleLogger("TraceLogger", stream=self._stream)
 
     def persist(self, trace: Trace):
-        self.logger.info("Trace", trace=trace)
+        self.logger.info("Trace", trace=trace.as_dict())
 
 
 class HumanReadableTracer(StreamTracer):

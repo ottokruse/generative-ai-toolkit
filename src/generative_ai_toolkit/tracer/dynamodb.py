@@ -24,11 +24,13 @@ class DynamoDbTracer(BaseTracer):
         trace_context_provider: TraceContextProvider | None = None,
         identifier: str | None = None,
         ttl: int | None = 60 * 60 * 24 * 30,  # 30 days
+        conversation_id_gsi_name="by_conversation_id",
     ) -> None:
         super().__init__(trace_context_provider=trace_context_provider)
         self.table = (session or boto3).resource("dynamodb").Table(table_name)
         self.identifier = identifier
         self.ttl = ttl
+        self.conversation_id_gsi_name = conversation_id_gsi_name
 
     def persist(self, trace: Trace):
         item = {
@@ -52,6 +54,13 @@ class DynamoDbTracer(BaseTracer):
         }
         if self.ttl is not None:
             item["expire_at"] = int(trace.started_at.timestamp()) + self.ttl
+
+        # Maintain as top level attribute for querying with GSI:
+        if "ai.conversation.id" in trace.attributes:
+            item["conversation_id"] = (
+                f"{trace.attributes["ai.conversation.id"]}#{trace.attributes.get("ai.auth.context", "-")}"
+            )
+
         try:
             self.table.put_item(
                 Item=DynamoDbMapper.to_dynamo(item),
@@ -63,20 +72,32 @@ class DynamoDbTracer(BaseTracer):
             raise ValueError(f"Trace {trace.trace_id} already exists") from e
 
     def get_traces(self, trace_id: str | None = None, attribute_filter=None):
-        if not trace_id:
-            raise ValueError("trace_id must be provided")
-        if attribute_filter and len(attribute_filter) > 1:
-            raise ValueError("Only trace_id filter is supported")
-        key_condition_expression = Key("pk").eq(f"TRACE#{trace_id}") & Key(
-            "sk"
-        ).begins_with(f"SPAN#{self.identifier or "_"}#")
+        params = {}
+        if trace_id:
+            params["KeyConditionExpression"] = Key("pk").eq(f"TRACE#{trace_id}") & Key(
+                "sk"
+            ).begins_with(f"SPAN#{self.identifier or "_"}#")
+        elif (
+            attribute_filter
+            and "ai.conversation.id" in attribute_filter
+            and "ai.auth.context" in attribute_filter
+        ):
+            params["KeyConditionExpression"] = Key("conversation_id").eq(
+                f"{attribute_filter["ai.conversation.id"]}#{attribute_filter["ai.auth.context"]}"
+            ) & Key("sk").begins_with(f"SPAN#{self.identifier or "_"}#")
+            params["IndexName"] = self.conversation_id_gsi_name
+        else:
+            raise ValueError(
+                "To use get_traces() you must either provide trace_id, or attribute_filter with keys 'ai.conversation.id' and 'ai.auth.context'"
+            )
+
         items = []
         last_evaluated_key: dict[str, Any] = {}
         while True:
             try:
                 response = self.table.query(
-                    KeyConditionExpression=key_condition_expression,
                     ScanIndexForward=True,
+                    **params,
                     **last_evaluated_key,
                 )
 
