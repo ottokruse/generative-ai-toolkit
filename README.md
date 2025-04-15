@@ -231,43 +231,42 @@ Note that this does not force the agent to use the provided tools, it merely mak
 
 ### 2.3 Tracing
 
-You can make `BedrockConverseAgent` log traces of the LLM and tool calls it performs, by providing a tracer class, such as the `InMemoryAgentTracer`, or the `DynamoDbAgentTracer` that logs traces to DynamoDB:
+You can make `BedrockConverseAgent` log traces of the LLM and tool calls it performs, by providing a tracer class.
+
+In the following example, the `InMemoryTracer` is used, which is meant for use during development:
 
 ```python
 from generative_ai_toolkit.agent import BedrockConverseAgent
 from generative_ai_toolkit.conversation_history import DynamoDbConversationHistory
-from generative_ai_toolkit.tracer import DynamoDbAgentTracer # Import tracer
+from generative_ai_toolkit.tracer import InMemoryTracer # Import tracer
 
 agent = BedrockConverseAgent(
     model_id="anthropic.claude-3-sonnet-20240229-v1:0",
     conversation_history=DynamoDbConversationHistory(table_name="conversations"),
-    tracer=DynamoDbAgentTracer(table_name="traces"), # Add tracer, this table needs to exist, with string keys "pk" and "sk"
+    tracer=InMemoryTracer, # Add tracer
 )
 ```
 
-Now, when you `converse()` with the agent, and the agent calls the LLM and tools, it will log traces. You can inspect these traces in the AWS console or programmatically like so:
+Now, when you `converse()` with the agent, and the agent calls e.g. LLM and tools, it will log traces. You can inspect these traces like so:
 
 ```python
-agent.converse("What's the capital of France?")
-print(agent.traces) # Prints the traces. In this example it would be just one trace of the LLM call
+response = agent.converse("What's the capital of France?")
+print(agent.traces[0])
 ```
 
-### Out of the box tracers
-
-For a full run-down of all out-of-the-box tracers, view [examples/tracing101.ipynb](examples/tracing101.ipynb).
-
-### Web UI
-
-You can view the traces for a conversation using the Generative AI Toolkit Web UI:
+Will output e.g.:
 
 ```python
-from generative_ai_toolkit.ui import traces_ui
-traces_ui(agent.traces).launch()
+Trace(span_name='converse', span_kind='SERVER', trace_id='33185be48ee341d16bf681a552535a4a', span_id='935272e82e76823c', parent_span_id=None, started_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 961, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 715109, tzinfo=datetime.timezone.utc), attributes={'ai.trace.type': 'converse', 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None, 'ai.user.input': "What's the capital of France?", 'ai.agent.response': 'The capital of France is Paris.'}, span_status='UNSET', resource_attributes={'service.name': 'BedrockConverseAgent'}, scope=generative-ai-toolkit@current)
 ```
 
-That opens the Web UI at http://127.0.0.1:7860. The conversation example from above, that uses the weather tool, would look like this:
+That is the root trace of the conversation, that captures user input and agent response. Other traces capture details such as LLM invocations, Tool invocations, usage of conversation history, etc.
 
-<img src="./assets/images/ui-traces.png" alt="UI Traces Display Screenshot" title="UI Traces Display" width="1000"/>
+#### Available tracers
+
+The Generative AI Toolkit includes several tracers out-of-the-box, e.g. the `DynamoDBTracer` that saves traces to DynamoDB, and the `OtlpTracer` that sends traces to an OpenTelemetry collector (e.g. to forward them to AWS X-Ray).
+
+For a full run-down of all out-of-the-box tracers and how to use them, view [examples/tracing101.ipynb](examples/tracing101.ipynb).
 
 #### Open Telemetry
 
@@ -307,8 +306,6 @@ In the OpenTelemetry Span model, information such as "the model ID used for the 
 
 #### Viewing traces
 
-Traces are represented (with Python's `repr()` call) minimally.
-
 ```python
 for trace in agent.traces:
     print(trace)
@@ -318,17 +315,19 @@ for trace in agent.traces:
 Would e.g. print:
 
 ```python
-Trace(span_name='llm-invocation', span_kind='CLIENT', trace_id='780b80551a9b3ba973c3bdcdbd8a8162', span_id='fee1f51800c7cbe9', parent_span_id='020baa3fef21980b', started_at=datetime.datetime(2025, 4, 15, 11, 26, 2, 216385, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 11, 26, 3, 817487, tzinfo=datetime.timezone.utc), attributes={'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': {'tools': [{'toolSpec': {'name': 'weather_report', 'description': 'Gets the current weather report for a given city', 'inputSchema': {'json': {'type': 'object', 'properties': {'city_name': {'type': 'string', 'description': 'The name of the city'}}}}}}]}, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}}, 'ai.llm.response.stop.reason': 'tool_use', 'ai.llm.response.usage': {'inputTokens': 371, 'outputTokens': 66, 'totalTokens': 437}, 'ai.llm.response.metrics': {'latencyMs': 1570}, 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={}, scope=generative-ai-toolkit@current)
+Trace(span_name='converse', span_kind='SERVER', trace_id='33185be48ee341d16bf681a552535a4a', span_id='935272e82e76823c', parent_span_id=None, started_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 961, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 715109, tzinfo=datetime.timezone.utc), attributes={'ai.trace.type': 'converse', 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None, 'ai.user.input': "What's the capital of France?", 'ai.agent.response': 'The capital of France is Paris.'}, span_status='UNSET', resource_attributes={'service.name': 'BedrockConverseAgent'}, scope=generative-ai-toolkit@current)
 
-Trace(span_name='weather_report', span_kind='CLIENT', trace_id='780b80551a9b3ba973c3bdcdbd8a8162', span_id='6778644c7a6955c5', parent_span_id='020baa3fef21980b', started_at=datetime.datetime(2025, 4, 15, 11, 26, 3, 817672, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 11, 26, 3, 817731, tzinfo=datetime.timezone.utc), attributes={'peer.service': 'tool:weather_report', 'ai.trace.type': 'tool-invocation', 'ai.tool.name': 'weather_report', 'ai.tool.use.id': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'ai.tool.input': {'city_name': 'Amsterdam'}, 'ai.tool.output': 'Sunny', 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={}, scope=generative-ai-toolkit@current)
+Trace(span_name='conversation-history-add', span_kind='CLIENT', trace_id='33185be48ee341d16bf681a552535a4a', span_id='ec7c8e79daac9be0', parent_span_id='935272e82e76823c', started_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 1059, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 158808, tzinfo=datetime.timezone.utc), attributes={'ai.trace.type': 'conversation-history-add', 'ai.conversation.history.message': {'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, 'ai.conversation.history.implementation': 'DynamoDbConversationHistory(table_name=conversations, identifier=None)', 'peer.service': 'memory:short-term', 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={'service.name': 'BedrockConverseAgent'}, scope=generative-ai-toolkit@current)
 
-Trace(span_name='llm-invocation', span_kind='CLIENT', trace_id='780b80551a9b3ba973c3bdcdbd8a8162', span_id='dcb9215deef92ada', parent_span_id='020baa3fef21980b', started_at=datetime.datetime(2025, 4, 15, 11, 26, 3, 817837, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 11, 26, 5, 94368, tzinfo=datetime.timezone.utc), attributes={'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': {'tools': [{'toolSpec': {'name': 'weather_report', 'description': 'Gets the current weather report for a given city', 'inputSchema': {'json': {'type': 'object', 'properties': {'city_name': {'type': 'string', 'description': 'The name of the city'}}}}}}]}, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'According to the weather report, the current weather in Amsterdam is sunny.'}]}}, 'ai.llm.response.stop.reason': 'end_turn', 'ai.llm.response.usage': {'inputTokens': 455, 'outputTokens': 18, 'totalTokens': 473}, 'ai.llm.response.metrics': {'latencyMs': 1248}, 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={}, scope=generative-ai-toolkit@current)
+Trace(span_name='conversation-history-list', span_kind='CLIENT', trace_id='33185be48ee341d16bf681a552535a4a', span_id='f23f49c975823d9d', parent_span_id='935272e82e76823c', started_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 158828, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 186879, tzinfo=datetime.timezone.utc), attributes={'ai.trace.type': 'conversation-history-list', 'ai.conversation.history.implementation': 'DynamoDbConversationHistory(table_name=conversations, identifier=None)', 'peer.service': 'memory:short-term', 'ai.conversation.history.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}], 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={'service.name': 'BedrockConverseAgent'}, scope=generative-ai-toolkit@current)
+
+Trace(span_name='llm-invocation', span_kind='CLIENT', trace_id='33185be48ee341d16bf681a552535a4a', span_id='92ff8f46baa35ec1', parent_span_id='935272e82e76823c', started_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 186905, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 686732, tzinfo=datetime.timezone.utc), attributes={'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': None, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}}, 'ai.llm.response.stop.reason': 'end_turn', 'ai.llm.response.usage': {'inputTokens': 14, 'outputTokens': 10, 'totalTokens': 24}, 'ai.llm.response.metrics': {'latencyMs': 350}, 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={'service.name': 'BedrockConverseAgent'}, scope=generative-ai-toolkit@current)
+
+Trace(span_name='conversation-history-add', span_kind='CLIENT', trace_id='33185be48ee341d16bf681a552535a4a', span_id='f9e6c4ff0254811c', parent_span_id='935272e82e76823c', started_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 686771, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 19, 33, 38, 715055, tzinfo=datetime.timezone.utc), attributes={'ai.trace.type': 'conversation-history-add', 'ai.conversation.history.message': {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, 'ai.conversation.history.implementation': 'DynamoDbConversationHistory(table_name=conversations, identifier=None)', 'peer.service': 'memory:short-term', 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={'service.name': 'BedrockConverseAgent'}, scope=generative-ai-toolkit@current)
 
 ```
 
-Note: for brevity, the example above only shows LLM invocations and tool traces.
-
-You can also display them in a human friendly format:
+You can also display traces in a human friendly format:
 
 ```python
 for trace in agent.traces:
@@ -338,50 +337,26 @@ for trace in agent.traces:
 Which would print e.g.:
 
 ```
-[780b80551a9b3ba973c3bdcdbd8a8162/root/020baa3fef21980b] <missing service.name> SERVER 2025-04-15T11:26:02.216Z - converse (ai.trace.type='converse' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-       Input: What's the weather like right now in Amsterdam?
-    Response: Let me check the current weather report for Amsterdam:\nAccording to the weather report, the current weather in Amsterdam is sunny.
+[33185be48ee341d16bf681a552535a4a/root/935272e82e76823c] BedrockConverseAgent SERVER 2025-04-15T19:33:38.000Z - converse (ai.trace.type='converse' ai.conversation.id='01JRXF2JHXACD860A6P7N0MXER' ai.auth.context='null')
+       Input: What's the capital of France?
+    Response: The capital of France is Paris.
 
-[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/e20316b9f2a9c64d] <missing service.name> CLIENT 2025-04-15T11:26:02.216Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-     Message: {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}
+[33185be48ee341d16bf681a552535a4a/935272e82e76823c/ec7c8e79daac9be0] BedrockConverseAgent CLIENT 2025-04-15T19:33:38.001Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRXF2JHXACD860A6P7N0MXER' ai.auth.context='null')
+     Message: {'role': 'user', 'content': [{'text': "What's the capital of France?"}]}
 
-[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/68ed878891d076df] <missing service.name> CLIENT 2025-04-15T11:26:02.216Z - conversation-history-list (ai.trace.type='conversation-history-list' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-    Messages: [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What'
-              s the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8US
-              laLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'con
-              tent': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weath...
+[33185be48ee341d16bf681a552535a4a/935272e82e76823c/f23f49c975823d9d] BedrockConverseAgent CLIENT 2025-04-15T19:33:38.158Z - conversation-history-list (ai.trace.type='conversation-history-list' peer.service='memory:short-term' ai.conversation.id='01JRXF2JHXACD860A6P7N0MXER' ai.auth.context='null')
+    Messages: [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}]
 
-[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/fee1f51800c7cbe9] <missing service.name> CLIENT 2025-04-15T11:26:02.216Z - llm-invocation (ai.trace.type='llm-invocation' peer.service='llm:claude-3-sonnet' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-Last message: [{'text': "What's the weather like right now in Amsterdam?"}]
-    Response: {'message': {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report',
-              'input': {'city_name': 'Amsterdam'}}}]}}
+[33185be48ee341d16bf681a552535a4a/935272e82e76823c/92ff8f46baa35ec1] BedrockConverseAgent CLIENT 2025-04-15T19:33:38.186Z - llm-invocation (ai.trace.type='llm-invocation' peer.service='llm:claude-3-sonnet' ai.conversation.id='01JRXF2JHXACD860A6P7N0MXER' ai.auth.context='null')
+Last message: [{'text': "What's the capital of France?"}]
+    Response: {'message': {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}}
 
-[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/07955a466c2ae798] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-     Message: {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'c
-              ity_name': 'Amsterdam'}}}]}
+[33185be48ee341d16bf681a552535a4a/935272e82e76823c/f9e6c4ff0254811c] BedrockConverseAgent CLIENT 2025-04-15T19:33:38.686Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRXF2JHXACD860A6P7N0MXER' ai.auth.context='null')
+     Message: {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}
 
-[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/6778644c7a6955c5] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - weather_report (ai.trace.type='tool-invocation' peer.service='tool:weather_report' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-       Input: {'city_name': 'Amsterdam'}
-      Output: Sunny
-
-[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/09d9ad9e83f68a15] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-     Message: {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}
-
-[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/98353d356bb5066d] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - conversation-history-list (ai.trace.type='conversation-history-list' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-    Messages: [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What'
-              s the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8US
-              laLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'con
-              tent': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weath...
-
-[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/dcb9215deef92ada] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - llm-invocation (ai.trace.type='llm-invocation' peer.service='llm:claude-3-sonnet' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-Last message: [{'toolResult': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]
-    Response: {'message': {'role': 'assistant', 'content': [{'text': 'According to the weather report, the current weather in Amsterdam is sunny.'}]}}
-
-[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/e4bcd619d39f3506] <missing service.name> CLIENT 2025-04-15T11:26:05.094Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
-     Message: {'role': 'assistant', 'content': [{'text': 'According to the weather report, the current weather in Amsterdam is sunny.'}]}
 ```
 
-Or as dictionaries:
+Or, as dictionaries:
 
 ```python
 for trace in agent.traces:
@@ -392,15 +367,57 @@ for trace in agent.traces:
 Which would print e.g.:
 
 ```python
-{'span_name': 'llm-invocation', 'span_kind': 'CLIENT', 'trace_id': '780b80551a9b3ba973c3bdcdbd8a8162', 'span_id': 'fee1f51800c7cbe9', 'parent_span_id': '020baa3fef21980b', 'started_at': datetime.datetime(2025, 4, 15, 11, 26, 2, 216385, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 11, 26, 3, 817487, tzinfo=datetime.timezone.utc), 'attributes': {'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': {'tools': [{'toolSpec': {'name': 'weather_report', 'description': 'Gets the current weather report for a given city', 'inputSchema': {'json': {'type': 'object', 'properties': {'city_name': {'type': 'string', 'description': 'The name of the city'}}}}}}]}, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}}, 'ai.llm.response.stop.reason': 'tool_use', 'ai.llm.response.usage': {'inputTokens': 371, 'outputTokens': 66, 'totalTokens': 437}, 'ai.llm.response.metrics': {'latencyMs': 1570}, 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
+{'span_name': 'converse', 'span_kind': 'SERVER', 'trace_id': '33185be48ee341d16bf681a552535a4a', 'span_id': '935272e82e76823c', 'parent_span_id': None, 'started_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 961, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 715109, tzinfo=datetime.timezone.utc), 'attributes': {'ai.trace.type': 'converse', 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None, 'ai.user.input': "What's the capital of France?", 'ai.agent.response': 'The capital of France is Paris.'}, 'span_status': 'UNSET', 'resource_attributes': {'service.name': 'BedrockConverseAgent'}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
 
-{'span_name': 'weather_report', 'span_kind': 'CLIENT', 'trace_id': '780b80551a9b3ba973c3bdcdbd8a8162', 'span_id': '6778644c7a6955c5', 'parent_span_id': '020baa3fef21980b', 'started_at': datetime.datetime(2025, 4, 15, 11, 26, 3, 817672, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 11, 26, 3, 817731, tzinfo=datetime.timezone.utc), 'attributes': {'peer.service': 'tool:weather_report', 'ai.trace.type': 'tool-invocation', 'ai.tool.name': 'weather_report', 'ai.tool.use.id': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'ai.tool.input': {'city_name': 'Amsterdam'}, 'ai.tool.output': 'Sunny', 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
+{'span_name': 'conversation-history-add', 'span_kind': 'CLIENT', 'trace_id': '33185be48ee341d16bf681a552535a4a', 'span_id': 'ec7c8e79daac9be0', 'parent_span_id': '935272e82e76823c', 'started_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 1059, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 158808, tzinfo=datetime.timezone.utc), 'attributes': {'ai.trace.type': 'conversation-history-add', 'ai.conversation.history.message': {'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, 'ai.conversation.history.implementation': 'DynamoDbConversationHistory(table_name=conversations, identifier=None)', 'peer.service': 'memory:short-term', 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {'service.name': 'BedrockConverseAgent'}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
 
-{'span_name': 'llm-invocation', 'span_kind': 'CLIENT', 'trace_id': '780b80551a9b3ba973c3bdcdbd8a8162', 'span_id': 'dcb9215deef92ada', 'parent_span_id': '020baa3fef21980b', 'started_at': datetime.datetime(2025, 4, 15, 11, 26, 3, 817837, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 11, 26, 5, 94368, tzinfo=datetime.timezone.utc), 'attributes': {'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': {'tools': [{'toolSpec': {'name': 'weather_report', 'description': 'Gets the current weather report for a given city', 'inputSchema': {'json': {'type': 'object', 'properties': {'city_name': {'type': 'string', 'description': 'The name of the city'}}}}}}]}, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'According to the weather report, the current weather in Amsterdam is sunny.'}]}}, 'ai.llm.response.stop.reason': 'end_turn', 'ai.llm.response.usage': {'inputTokens': 455, 'outputTokens': 18, 'totalTokens': 473}, 'ai.llm.response.metrics': {'latencyMs': 1248}, 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
+{'span_name': 'conversation-history-list', 'span_kind': 'CLIENT', 'trace_id': '33185be48ee341d16bf681a552535a4a', 'span_id': 'f23f49c975823d9d', 'parent_span_id': '935272e82e76823c', 'started_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 158828, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 186879, tzinfo=datetime.timezone.utc), 'attributes': {'ai.trace.type': 'conversation-history-list', 'ai.conversation.history.implementation': 'DynamoDbConversationHistory(table_name=conversations, identifier=None)', 'peer.service': 'memory:short-term', 'ai.conversation.history.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}], 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {'service.name': 'BedrockConverseAgent'}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
+
+{'span_name': 'llm-invocation', 'span_kind': 'CLIENT', 'trace_id': '33185be48ee341d16bf681a552535a4a', 'span_id': '92ff8f46baa35ec1', 'parent_span_id': '935272e82e76823c', 'started_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 186905, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 686732, tzinfo=datetime.timezone.utc), 'attributes': {'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': None, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}}, 'ai.llm.response.stop.reason': 'end_turn', 'ai.llm.response.usage': {'inputTokens': 14, 'outputTokens': 10, 'totalTokens': 24}, 'ai.llm.response.metrics': {'latencyMs': 350}, 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {'service.name': 'BedrockConverseAgent'}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
+
+{'span_name': 'conversation-history-add', 'span_kind': 'CLIENT', 'trace_id': '33185be48ee341d16bf681a552535a4a', 'span_id': 'f9e6c4ff0254811c', 'parent_span_id': '935272e82e76823c', 'started_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 686771, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 19, 33, 38, 715055, tzinfo=datetime.timezone.utc), 'attributes': {'ai.trace.type': 'conversation-history-add', 'ai.conversation.history.message': {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, 'ai.conversation.history.implementation': 'DynamoDbConversationHistory(table_name=conversations, identifier=None)', 'peer.service': 'memory:short-term', 'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {'service.name': 'BedrockConverseAgent'}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
 
 ```
 
-Note: for brevity, the example above only shows LLM invocations and tool traces.
+#### Web UI
+
+You can view the traces for a conversation using the Generative AI Toolkit Web UI:
+
+```python
+from generative_ai_toolkit.ui import traces_ui
+demo = traces_ui(agent.traces)
+demo.launch()
+```
+
+That opens the Web UI at http://127.0.0.1:7860. E.g. a conversation, that includes an invocation of a weather tool, would look like this:
+
+<img src="./assets/images/ui-traces.png" alt="UI Traces Display Screenshot" title="UI Traces Display" width="1000"/>
+
+Note that by default only traces for LLM invocations and Tool invocations are shown, as well as user input and agent output. You can choose to view all traces, which would also show e.g. usage of conversational memory, and any other traces the agent developer may have decided to add.
+
+Stop the Web UI as follows:
+
+```python
+demo.close()
+```
+
+#### DynamoDB example
+
+As example, here's some traces that were stored with the `DynamoDBTracer`:
+
+<img src="./assets/images/dynamodb-traces.png" alt="DynamoDB Traces Display Screenshot" title="DynamoDB Traces Display" width="1200"/>
+
+In production deployments, you'll likely want to use the `DynamoDBTracer`, so you can listen to the DynamoDB stream as traces are recorded, and run metric evaluations against them (see next section). This way, you can monitor the performance of your agent in production.
+
+#### AWS X-Ray example
+
+Here's a more elaborate example of a set traces when viewed in AWS X-Ray (you would have used the `OtlpTracer` to send them there):
+
+<img src="./assets/images/x-ray-trace-map.png" alt="AWS X-Ray Trace Map Screenshot" title="AWS X-Ray Trace Map" width="1200"/>
+
+The AWS X-Ray view is great because it gives developers an easy-to-digest graphical representation of traces. It's easy to see what the agent did, in which order, how long these actions took, and what the trace attributes are (see "Meta Data" on the right) that capture e.g. inputs and outputs for LLM invocations and tool invocations:
+
+<img src="./assets/images/x-ray-trace-segments-timeline.png" alt="AWS X-Ray Trace Segments Timeline Screenshot" title="AWS X-Ray Trace Segments Timeline" width="1200"/>
 
 ### 2.4 Metrics
 

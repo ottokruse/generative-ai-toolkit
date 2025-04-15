@@ -21,6 +21,7 @@ from .tracer import (
     HumanReadableTracer,
     StructuredLogsTracer,
     TeeTracer,
+    BaseTracer,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "HumanReadableTracer",
     "StructuredLogsTracer",
     "TeeTracer",
+    "BaseTracer",
 ]

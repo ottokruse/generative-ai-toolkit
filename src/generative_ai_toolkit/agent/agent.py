@@ -403,7 +403,7 @@ class BedrockConverseAgent(Agent):
         Get the collected traces so far (for the current conversation)
         """
         return self._tracer.get_traces(
-            {
+            attribute_filter={
                 "ai.conversation.id": self._conversation_history.conversation_id,
                 "ai.auth.context": self._conversation_history.auth_context,
             }
