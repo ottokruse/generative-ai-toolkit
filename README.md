@@ -252,6 +252,23 @@ agent.converse("What's the capital of France?")
 print(agent.traces) # Prints the traces. In this example it would be just one trace of the LLM call
 ```
 
+### Out of the box tracers
+
+For a full run-down of all out-of-the-box tracers, view [examples/tracing101.ipynb](examples/tracing101.ipynb).
+
+### Web UI
+
+You can view the traces for a conversation using the Generative AI Toolkit Web UI:
+
+```python
+from generative_ai_toolkit.ui import traces_ui
+traces_ui(agent.traces).launch()
+```
+
+That opens the Web UI at http://127.0.0.1:7860. The conversation example from above, that uses the weather tool, would look like this:
+
+<img src="./assets/images/ui-traces.png" alt="UI Traces Display Screenshot" title="UI Traces Display" width="1000"/>
+
 #### Open Telemetry
 
 Traces use the [OpenTelemetry "Span" model](https://opentelemetry.io/docs/specs/otel/trace/api/#span). That model works at high level by assigning a unique Trace ID to each incoming request (e.g. over HTTP). All actions that are taken while executing that request, are recorded as "span" and will have a unique Span ID. Span name, start timestamp, end timestamp, are recorded at span level.
@@ -293,52 +310,97 @@ In the OpenTelemetry Span model, information such as "the model ID used for the 
 Traces are represented (with Python's `repr()` call) minimally.
 
 ```python
-repr(agent.traces)
+for trace in agent.traces:
+    print(trace)
+    print()
 ```
 
 Would e.g. print:
 
-```
-[Trace(to=LLM, conversation_id=01JD2CMHRJJ6BPW4DM7V9S7V3Q, trace_id=01JD2CMK7H30MJ11NG4GQDT1PD),
- Trace(to=TOOL, conversation_id=01JD2CMHRJJ6BPW4DM7V9S7V3Q, trace_id=01JD2CMK7HWZ7M6C1RPGJY4MNH),
- Trace(to=LLM, conversation_id=01JD2CMHRJJ6BPW4DM7V9S7V3Q, trace_id=01JD2CMM6P3H1ZHEKDS0TRXFR0)]
+```python
+Trace(span_name='llm-invocation', span_kind='CLIENT', trace_id='780b80551a9b3ba973c3bdcdbd8a8162', span_id='fee1f51800c7cbe9', parent_span_id='020baa3fef21980b', started_at=datetime.datetime(2025, 4, 15, 11, 26, 2, 216385, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 11, 26, 3, 817487, tzinfo=datetime.timezone.utc), attributes={'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': {'tools': [{'toolSpec': {'name': 'weather_report', 'description': 'Gets the current weather report for a given city', 'inputSchema': {'json': {'type': 'object', 'properties': {'city_name': {'type': 'string', 'description': 'The name of the city'}}}}}}]}, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}}, 'ai.llm.response.stop.reason': 'tool_use', 'ai.llm.response.usage': {'inputTokens': 371, 'outputTokens': 66, 'totalTokens': 437}, 'ai.llm.response.metrics': {'latencyMs': 1570}, 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={}, scope=generative-ai-toolkit@current)
+
+Trace(span_name='weather_report', span_kind='CLIENT', trace_id='780b80551a9b3ba973c3bdcdbd8a8162', span_id='6778644c7a6955c5', parent_span_id='020baa3fef21980b', started_at=datetime.datetime(2025, 4, 15, 11, 26, 3, 817672, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 11, 26, 3, 817731, tzinfo=datetime.timezone.utc), attributes={'peer.service': 'tool:weather_report', 'ai.trace.type': 'tool-invocation', 'ai.tool.name': 'weather_report', 'ai.tool.use.id': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'ai.tool.input': {'city_name': 'Amsterdam'}, 'ai.tool.output': 'Sunny', 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={}, scope=generative-ai-toolkit@current)
+
+Trace(span_name='llm-invocation', span_kind='CLIENT', trace_id='780b80551a9b3ba973c3bdcdbd8a8162', span_id='dcb9215deef92ada', parent_span_id='020baa3fef21980b', started_at=datetime.datetime(2025, 4, 15, 11, 26, 3, 817837, tzinfo=datetime.timezone.utc), ended_at=datetime.datetime(2025, 4, 15, 11, 26, 5, 94368, tzinfo=datetime.timezone.utc), attributes={'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': {'tools': [{'toolSpec': {'name': 'weather_report', 'description': 'Gets the current weather report for a given city', 'inputSchema': {'json': {'type': 'object', 'properties': {'city_name': {'type': 'string', 'description': 'The name of the city'}}}}}}]}, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'According to the weather report, the current weather in Amsterdam is sunny.'}]}}, 'ai.llm.response.stop.reason': 'end_turn', 'ai.llm.response.usage': {'inputTokens': 455, 'outputTokens': 18, 'totalTokens': 473}, 'ai.llm.response.metrics': {'latencyMs': 1248}, 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, span_status='UNSET', resource_attributes={}, scope=generative-ai-toolkit@current)
+
 ```
 
-When transformed to a string, e.g. when printed, more information is displayed:
+Note: for brevity, the example above only shows LLM invocations and tool traces.
+
+You can also display them in a human friendly format:
 
 ```python
-print(agent.traces[0])
+for trace in agent.traces:
+    print(trace.as_human_readable())
 ```
 
-Would e.g. print:
+Which would print e.g.:
 
 ```
-======================================
-LLM TRACE (LlmCaseTrace)
-======================================
-To:              LLM
-Conversation ID: 01JD2CMHRJJ6BPW4DM7V9S7V3Q
-Auth context:    None
-Created at:      2024-11-21 08:22:15.546000+00:00
-Additional info:
-  {}
-Request messages:
-  {'text': 'What is the weather like right now?'}
-Response message:
-  [{'text': 'Okay, let me check the weather for your current location:'}, {'toolUse': {'toolUseId': 'tooluse_abox8YYlSeiPsjQWab0O5w', 'name': 'get_weather', 'input': {}}}]
-Request (full):
-  {"modelId":"anthropic.claude-3-haiku-20240307-v1:0", "inferenceConfig":{}, "messages":[{"role":"user", "content":[{"text":"What is the weather like right now?"}]}], "toolConfig":{"tools":[{"toolSpec":{"name":"get_weather", "description":"Gets the current weather for the user's location.\nThis tool has no parameters, and already knows where the user is.", "inputSchema":{"json":{"type":"object", "properties":{}}}}}]}}
-Response (full):
-  {"ResponseMetadata":{"RequestId":"9e4fc2a8-49e7-454e-8870-6a408bab27c3", "HTTPStatusCode":200, "HTTPHeaders":{"date":"Tue, 19 Nov 2024 14:18:48 GMT", "content-type":"application/json", "content-length":"332", "connection":"keep-alive", "x-amzn-requestid":"9e4fc2a8-49e7-454e-8870-6a408bab27c3"}, "RetryAttempts":0}, "output":{"message":{"role":"assistant", "content":[{"text":"Okay, let me check the weather for your current location:"}, {"toolUse":{"toolUseId":"tooluse_abox8YYlSeiPsjQWab0O5w", "name":"get_weather", "input":{}}}]}}, "stopReason":"tool_use", "usage":{"inputTokens":337, "outputTokens":50, "totalTokens":387}, "metrics":{"latencyMs":1379}}
+[780b80551a9b3ba973c3bdcdbd8a8162/root/020baa3fef21980b] <missing service.name> SERVER 2025-04-15T11:26:02.216Z - converse (ai.trace.type='converse' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+       Input: What's the weather like right now in Amsterdam?
+    Response: Let me check the current weather report for Amsterdam:\nAccording to the weather report, the current weather in Amsterdam is sunny.
+
+[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/e20316b9f2a9c64d] <missing service.name> CLIENT 2025-04-15T11:26:02.216Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+     Message: {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}
+
+[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/68ed878891d076df] <missing service.name> CLIENT 2025-04-15T11:26:02.216Z - conversation-history-list (ai.trace.type='conversation-history-list' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+    Messages: [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What'
+              s the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8US
+              laLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'con
+              tent': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weath...
+
+[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/fee1f51800c7cbe9] <missing service.name> CLIENT 2025-04-15T11:26:02.216Z - llm-invocation (ai.trace.type='llm-invocation' peer.service='llm:claude-3-sonnet' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+Last message: [{'text': "What's the weather like right now in Amsterdam?"}]
+    Response: {'message': {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report',
+              'input': {'city_name': 'Amsterdam'}}}]}}
+
+[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/07955a466c2ae798] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+     Message: {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'c
+              ity_name': 'Amsterdam'}}}]}
+
+[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/6778644c7a6955c5] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - weather_report (ai.trace.type='tool-invocation' peer.service='tool:weather_report' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+       Input: {'city_name': 'Amsterdam'}
+      Output: Sunny
+
+[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/09d9ad9e83f68a15] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+     Message: {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}
+
+[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/98353d356bb5066d] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - conversation-history-list (ai.trace.type='conversation-history-list' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+    Messages: [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What'
+              s the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8US
+              laLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'con
+              tent': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weath...
+
+[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/dcb9215deef92ada] <missing service.name> CLIENT 2025-04-15T11:26:03.817Z - llm-invocation (ai.trace.type='llm-invocation' peer.service='llm:claude-3-sonnet' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+Last message: [{'toolResult': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]
+    Response: {'message': {'role': 'assistant', 'content': [{'text': 'According to the weather report, the current weather in Amsterdam is sunny.'}]}}
+
+[780b80551a9b3ba973c3bdcdbd8a8162/020baa3fef21980b/e4bcd619d39f3506] <missing service.name> CLIENT 2025-04-15T11:26:05.094Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRWK1PGC4G75KAYRS7S7YGAQ' ai.auth.context='null')
+     Message: {'role': 'assistant', 'content': [{'text': 'According to the weather report, the current weather in Amsterdam is sunny.'}]}
 ```
 
-Traces are Python `dataclasses` so you can also turn them into a `dict` and log them like that to see even fuller details:
+Or as dictionaries:
 
 ```python
-from dataclasses import asdict
-
-print(asdict(agent.traces[0]))
+for trace in agent.traces:
+    print(trace.as_dict())
+    print()
 ```
+
+Which would print e.g.:
+
+```python
+{'span_name': 'llm-invocation', 'span_kind': 'CLIENT', 'trace_id': '780b80551a9b3ba973c3bdcdbd8a8162', 'span_id': 'fee1f51800c7cbe9', 'parent_span_id': '020baa3fef21980b', 'started_at': datetime.datetime(2025, 4, 15, 11, 26, 2, 216385, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 11, 26, 3, 817487, tzinfo=datetime.timezone.utc), 'attributes': {'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': {'tools': [{'toolSpec': {'name': 'weather_report', 'description': 'Gets the current weather report for a given city', 'inputSchema': {'json': {'type': 'object', 'properties': {'city_name': {'type': 'string', 'description': 'The name of the city'}}}}}}]}, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}}, 'ai.llm.response.stop.reason': 'tool_use', 'ai.llm.response.usage': {'inputTokens': 371, 'outputTokens': 66, 'totalTokens': 437}, 'ai.llm.response.metrics': {'latencyMs': 1570}, 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
+
+{'span_name': 'weather_report', 'span_kind': 'CLIENT', 'trace_id': '780b80551a9b3ba973c3bdcdbd8a8162', 'span_id': '6778644c7a6955c5', 'parent_span_id': '020baa3fef21980b', 'started_at': datetime.datetime(2025, 4, 15, 11, 26, 3, 817672, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 11, 26, 3, 817731, tzinfo=datetime.timezone.utc), 'attributes': {'peer.service': 'tool:weather_report', 'ai.trace.type': 'tool-invocation', 'ai.tool.name': 'weather_report', 'ai.tool.use.id': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'ai.tool.input': {'city_name': 'Amsterdam'}, 'ai.tool.output': 'Sunny', 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
+
+{'span_name': 'llm-invocation', 'span_kind': 'CLIENT', 'trace_id': '780b80551a9b3ba973c3bdcdbd8a8162', 'span_id': 'dcb9215deef92ada', 'parent_span_id': '020baa3fef21980b', 'started_at': datetime.datetime(2025, 4, 15, 11, 26, 3, 817837, tzinfo=datetime.timezone.utc), 'ended_at': datetime.datetime(2025, 4, 15, 11, 26, 5, 94368, tzinfo=datetime.timezone.utc), 'attributes': {'peer.service': 'llm:claude-3-sonnet', 'ai.trace.type': 'llm-invocation', 'ai.llm.request.inference.config': {}, 'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}, {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Okay, let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_e-kWhR8USlaLIkPK460vqg', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}, {'role': 'assistant', 'content': [{'text': 'The current weather in Amsterdam is sunny.'}]}, {'role': 'user', 'content': [{'text': "What's the weather like right now in Amsterdam?"}]}, {'role': 'assistant', 'content': [{'text': 'Let me check the current weather report for Amsterdam:'}, {'toolUse': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'name': 'weather_report', 'input': {'city_name': 'Amsterdam'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse__vnY2WOGSvukpWX36bDcGA', 'status': 'success', 'content': [{'json': {'toolResponse': 'Sunny'}}]}}]}], 'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0', 'ai.llm.request.system': None, 'ai.llm.request.tool.config': {'tools': [{'toolSpec': {'name': 'weather_report', 'description': 'Gets the current weather report for a given city', 'inputSchema': {'json': {'type': 'object', 'properties': {'city_name': {'type': 'string', 'description': 'The name of the city'}}}}}}]}, 'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'According to the weather report, the current weather in Amsterdam is sunny.'}]}}, 'ai.llm.response.stop.reason': 'end_turn', 'ai.llm.response.usage': {'inputTokens': 455, 'outputTokens': 18, 'totalTokens': 473}, 'ai.llm.response.metrics': {'latencyMs': 1248}, 'ai.conversation.id': '01JRWK1PGC4G75KAYRS7S7YGAQ', 'ai.auth.context': None}, 'span_status': 'UNSET', 'resource_attributes': {}, 'scope': {'name': 'generative-ai-toolkit', 'version': 'current'}}
+
+```
+
+Note: for brevity, the example above only shows LLM invocations and tool traces.
 
 ### 2.4 Metrics
 
