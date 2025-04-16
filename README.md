@@ -1048,7 +1048,7 @@ metrics = [
     LatencyMetric(),
 ]
 
-AWSLambdaRunner.configure(metrics=metrics, agent_name="{{cookiecutter.agent_name}}")
+AWSLambdaRunner.configure(metrics=metrics, agent_name="MyAgent")
 ```
 
 In your Lambda function definition, if the above file is stored as `index.py`, you would use `index.AWSLambdaRunner` as handler.
@@ -1093,7 +1093,7 @@ Runner.configure(
 )
 ```
 
-In your Lambda function definition, if the above file is stored as `index.py`, you would use `index.Runner` as handler.
+In your Lambda function definition, if the above file is stored as `index.py`, you would use `index.Runner()` as handler.
 
 Note that you must use the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter) to run the `Runner` on AWS Lambda.
 
@@ -1225,8 +1225,6 @@ def extract_x_user_id_from_request(request: Request):
 
 Runner.configure(agent=my_agent, auth_context_fn=extract_x_user_id_from_request)
 ```
-
-> You would make that change in <a href="./{{ cookiecutter.package_name }}/lib/agent/agent.py">this file of the applied cookiecutter template</a>.
 
 > The `Runner` uses, by default, the AWS IAM `userId` as auth context. The actual value of this `userId` depends on how you've acquired AWS credentials to sign the AWS Lambda Function URL request with. For example, if you've assumed an AWS IAM Role it will simply be the concatenation of your assumed role ID with your chosen session ID. You'll likely want to customize the auth context as explained in this paragraph!
 
