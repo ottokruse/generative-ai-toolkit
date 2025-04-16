@@ -21,7 +21,17 @@ from typing import (
     Mapping,
     NamedTuple,
 )
+import threading
+import copy
 
+deepcopy_lock = threading.Lock()
+IMMUTABLE_TYPES = (int, float, bool, str, type(None), tuple, frozenset)
+
+def thread_safe_deepcopy(obj):
+    if isinstance(obj, IMMUTABLE_TYPES):
+        return obj
+    with deepcopy_lock:
+        return copy.deepcopy(obj)
 
 class Trace:
     span_name: str
@@ -106,6 +116,7 @@ class Trace:
         *,
         inheritable=False,
     ) -> "Trace":
+        attribute_value = thread_safe_deepcopy(attribute_value)
         self._attributes[attribute_key] = attribute_value
         if inheritable:
             self._inheritable_attributes[attribute_key] = attribute_value

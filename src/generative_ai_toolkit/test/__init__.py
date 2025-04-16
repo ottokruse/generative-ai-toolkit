@@ -50,32 +50,38 @@ class CaseTrace(Trace):
 
     def __init__(
         self,
-        span_name: str,
         *,
-        scope: TraceScope,
+        # CaseTrace specific attributes:
         case: "Case",
         case_nr: int,
         run_nr: int,
         permutation_nr: int,
         permutation: Mapping[str, Any] | None,
+        # Trace attributes:
+        span_name: str,
+        span_kind: Literal["INTERNAL", "SERVER", "CLIENT"] = "INTERNAL",
         trace_id: str | None = None,
         span_id: str | None = None,
         parent_span: "Trace | None" = None,
         started_at: datetime | None = None,
         ended_at: datetime | None = None,
         attributes: dict[str, Any] | None = None,
+        span_status: Literal["UNSET", "OK", "ERROR"] = "UNSET",
         resource_attributes: Mapping[str, Any] | None = None,
+        scope: "TraceScope | None" = None,
     ) -> None:
         super().__init__(
             span_name=span_name,
+            span_kind=span_kind,
             trace_id=trace_id,
             span_id=span_id,
             parent_span=parent_span,
             started_at=started_at,
             ended_at=ended_at,
             attributes=attributes,
-            scope=scope,
             resource_attributes=resource_attributes,
+            span_status=span_status,
+            scope=scope,
         )
         self.case = case
         self.case_nr = case_nr
@@ -88,25 +94,17 @@ class _AgentLike(Protocol):
     def converse(self, user_input: str) -> Any: ...
 
     @property
-    def traces(self) -> Iterable[Trace]: ...
+    def traces(self) -> Sequence[Trace]: ...
 
 
 @runtime_checkable
-class _AgentLikeWithReset(Protocol):
-    def converse(self, user_input: str) -> Any: ...
-
-    @property
-    def traces(self) -> Iterable[Trace]: ...
+class _AgentLikeWithReset(_AgentLike, Protocol):
 
     def reset(self) -> None: ...
 
 
 @runtime_checkable
-class _AgentLikeWithMessages(Protocol):
-    def converse(self, user_input: str) -> Any: ...
-
-    @property
-    def traces(self) -> Iterable[Trace]: ...
+class _AgentLikeWithMessages(_AgentLike, Protocol):
 
     @property
     def messages(self) -> Sequence[Message]: ...
@@ -166,15 +164,19 @@ class Case:
         if case_trace_info is None:
             case_trace_info = CaseTraceInfo()
         return CaseTrace(
+            # Trace attributes:
             span_name=trace.span_name,
+            span_kind=trace.span_kind,
             trace_id=trace.trace_id,
             span_id=trace.span_id,
             parent_span=trace.parent_span,
             started_at=trace.started_at,
             ended_at=trace.ended_at,
             attributes=dict(trace.attributes),
-            scope=trace.scope,
             resource_attributes=trace.resource_attributes,
+            span_status=trace.span_status,
+            scope=trace.scope,
+            # CaseTrace specific attributes:
             case=self,
             case_nr=case_trace_info.case_nr,
             run_nr=case_trace_info.run_nr,
@@ -205,10 +207,11 @@ class Case:
             for user_input in self._user_inputs:
                 _agent.converse(user_input, **self.converse_kwargs)
         if self.user_input_producer:
-            messages = (
-                _agent.messages if isinstance(_agent, _AgentLikeWithMessages) else []
-            )
-            while user_input := self.user_input_producer(messages):
+            if not isinstance(_agent, _AgentLikeWithMessages):
+                raise ValueError(
+                    "user_input_producer can only be used with agents that implement the messages property"
+                )
+            while user_input := self.user_input_producer(_agent.messages):
                 _agent.converse(user_input, **self.converse_kwargs)
         return [self.as_case_trace(trace, case_trace_info) for trace in _agent.traces]
 
@@ -410,7 +413,7 @@ class UserInputProducer:
         if not messages:
             return False
         conversation_messages = user_conversation_from_messages(messages)
-        if len(conversation_messages) > self.max_nr_turns:
+        if int(len(conversation_messages) / 2) >= self.max_nr_turns:
             return True
         text = (
             textwrap.dedent(
@@ -425,8 +428,27 @@ class UserInputProducer:
 
                 {conversation_history}
 
-                Return "USER INPUT NEEDED" if the assistant STILL requires information from the user. Return "USER INPUT OPTIONAL" otherwise.
-                Only return "USER INPUT NEEDED" or "USER INPUT OPTIONAL".
+                Return "ASK USER" if the assistant needs input from the user, for example:
+
+                  - if the assistant asks the user for confirmation
+                  - if the assistant asks the user for additional information to (further) clarify the user's request.
+
+                Return "ABORT", if continuing the conversation doesn't make sense anymore, for example:
+
+                  - if the user's intent was reasonably satisfied by the assistant; the assistant did what the user asked.
+                  - if the user wants to end the conversation
+                  - if continuing the conversation becomes pointless
+                
+                Your response should be "ASK USER" or "ABORT", followed by your reasoning, for example:
+
+                  - ABORT: the user's intent was satisfied, they wanted XYZ and they got XYZ. The assistant doesn't need to confirm.
+                  - ABORT: the user explicitly asks to abort/stop/discontinue the conversation
+                  - ABORT: the user implicitly signals they want to end the conversation, by saying e.g. just "OK" or "Thank you"
+                  - ASK USER: the assistant needs the user to clarify XYZ
+                  - ASK USER: the assistant requests the user for confirmation
+                  - ASK USER: the assistant wants to know if the user has any other requests
+
+                Give your response now, in the format explained above.
                 """
             )
             .format(
@@ -449,14 +471,15 @@ class UserInputProducer:
                     "text": textwrap.dedent(
                         """
                         You are an expert at judging conversations between users and assistants.
+                        Your job is to determine if the user should provide additional input to the assistant.
+                        Don't bother users unnecessarily; if they got what they asked for, the assistant doesn't need more input from them.
                         """
                     ).strip()
                 }
             ],
         )
-        intent_satisfied = (
-            "optional" in get_text(cast(NonStreamingResponse, response)).lower()
-        )
+        response = get_text(cast(NonStreamingResponse, response))
+        intent_satisfied = "ABORT" in response
         return intent_satisfied
 
     def __call__(self, messages: Sequence[Message] | None = None) -> str:

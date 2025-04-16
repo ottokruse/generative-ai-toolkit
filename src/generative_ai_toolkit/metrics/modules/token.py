@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from generative_ai_toolkit.metrics import BaseMetric, Measurement
+from generative_ai_toolkit.metrics import BaseMetric, Measurement, Unit
 
 
 class TokensMetric(BaseMetric):
@@ -26,14 +26,17 @@ class TokensMetric(BaseMetric):
         return [
             Measurement(
                 name="TotalTokens",
-                value=float(input_tokens + output_tokens),
+                value=input_tokens + output_tokens,
+                unit=Unit.Count,
             ),
             Measurement(
                 name="InputTokens",
-                value=float(input_tokens),
+                value=input_tokens,
+                unit=Unit.Count,
             ),
             Measurement(
                 name="OutputTokens",
-                value=float(output_tokens),
+                value=output_tokens,
+                unit=Unit.Count,
             ),
         ]

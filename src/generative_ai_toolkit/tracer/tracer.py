@@ -281,10 +281,15 @@ class BaseTracer(Tracer):
         trace_id: str | None = None,
         attribute_filter: Mapping[str, Any] | None = None,
     ) -> Sequence[Trace]:
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"You're using the {self.__class__.__name__} tracer, that doesn't support get_traces(). "
+            "Use another tracer, such as the InMemoryTracer or the DynamoDBTracer. "
+        )
 
     def persist(self, trace: Trace):
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"You're using the {self.__class__.__name__} tracer, that doesn't support persist()."
+        )
 
 
 class NoopTracer(BaseTracer):

@@ -207,6 +207,27 @@ print(response) # Okay, let me get the current weather report for Amsterdam usin
 
 As you can see, tools that you've registered will be invoked automatically by the agent. The output from `converse` is always just a string with the agent's response to the user.
 
+#### Other tools
+
+If you don't want to register a Python function as tool, but have a tool with toolspec ready, you can also use it directly, as long as your tool satisfies the `Tool` protocol, i.e. has this shape:
+
+```python
+from typing import Any
+from generative_ai_toolkit.agent.tool import ToolSpec
+
+class MyTool:
+    name = "my-tool"
+
+    @property
+    def tool_spec(self) -> ToolSpec:
+        return {"toolSpec":{"name":"my-tool","description":"This tool helps with ...", "inputSchema": {...}}}
+
+    def invoke(self, *args, **kwargs) -> Any:
+        return "Tool response"
+
+agent.register_tool(MyTool())
+```
+
 #### Tools override
 
 It's possible to set and override the tool selection when calling converse:
@@ -415,7 +436,7 @@ Here's a more elaborate example of a set traces when viewed in AWS X-Ray (you wo
 
 <img src="./assets/images/x-ray-trace-map.png" alt="AWS X-Ray Trace Map Screenshot" title="AWS X-Ray Trace Map" width="1200"/>
 
-The AWS X-Ray view is great because it gives developers an easy-to-digest graphical representation of traces. It's easy to see what the agent did, in which order, how long these actions took, and what the trace attributes are (see "Meta Data" on the right) that capture e.g. inputs and outputs for LLM invocations and tool invocations:
+The AWS X-Ray view is great because it gives developers an easy-to-digest graphical representation of traces. It's easy to see what the agent did, in which order, how long these actions took, and what the trace attributes are that capture e.g. inputs and outputs for LLM invocations and tool invocations (see the "Metadata" pane on the right) :
 
 <img src="./assets/images/x-ray-trace-segments-timeline.png" alt="AWS X-Ray Trace Segments Timeline Screenshot" title="AWS X-Ray Trace Segments Timeline" width="1200"/>
 
@@ -461,7 +482,14 @@ for conversation_measurements in results:
             print(measurement) # measurement concerning an individual trace
 ```
 
-Note that these measurements can easily be exported to Amazon CloudWatch as Custom Metrics, which allow you to use Amazon CloudWatch for creating dashboards, aggregations, alarms, etc. See further below.
+Or, access the measurements as a (flattened) DataFrame:
+
+```python
+df = results.details()
+df.head()
+```
+
+Note that measurements can easily be exported to Amazon CloudWatch as Custom Metrics, which allow you to use Amazon CloudWatch for creating dashboards, aggregations, alarms, etc. See further below.
 
 #### Included metrics
 
@@ -508,25 +536,32 @@ from generative_ai_toolkit.metrics import BaseMetric, Measurement, Unit
 
 
 class TokenCount(BaseMetric):
-    def evaluate_trace(self, trace, **kwargs):
-        if trace.to != "LLM":
-            # Ignore tool traces
-            return
-        return [
-            Measurement(
-                name="NrOfOInputTokens",
-                value=trace.response["usage"]["inputTokens"],
-                unit=Unit.Count,
-            ),
-            Measurement(
-                name="NrOfOutputTokens",
-                value=trace.response["usage"]["outputTokens"],
-                unit=Unit.Count,
-            ),
-        ]
+    if trace.attributes.get("ai.trace.type") != "llm-invocation":
+        return
+
+    input_tokens = trace.attributes["ai.llm.response.usage"]["inputTokens"]
+    output_tokens = trace.attributes["ai.llm.response.usage"]["outputTokens"]
+
+    return [
+        Measurement(
+            name="TotalTokens",
+            value=input_tokens + output_tokens,
+            unit=Unit.Count,
+        ),
+        Measurement(
+            name="InputTokens",
+            value=input_tokens,
+            unit=Unit.Count,
+        ),
+        Measurement(
+            name="OutputTokens",
+            value=output_tokens,
+            unit=Unit.Count,
+        ),
+    ]
 ```
 
-The above custom metric returns 2 measurements, but only for LLM traces.
+The above custom metric returns 3 measurements, but only for LLM traces.
 
 Evaluating your own custom metrics works the same as for the out-of-the-box metrics (and they can be matched freely):
 
@@ -556,7 +591,7 @@ Use [TEMPLATE_metric.py](src/generative_ai_toolkit/metrics/modules/TEMPLATE_metr
 
 Besides measuring an agent's performance in a scalar way, custom metrics can (optionally) return a Pass or Fail indicator. This will be reflected in the measurements summary and such traces would be marked as failed in the Web UI for conversation debugging (see further).
 
-Let's tweak our `TokenCount` metric:
+Let's tweak our `TokenCount` metric to make it fail if the LLM returns more than 100 tokens:
 
 ```python
 from generative_ai_toolkit.metrics import BaseMetric, Measurement, Unit
@@ -564,19 +599,28 @@ from generative_ai_toolkit.metrics import BaseMetric, Measurement, Unit
 
 class TokenCount(BaseMetric):
     def evaluate_trace(self, trace, **kwargs):
-        if trace.to != "LLM":
+        if trace.attributes.get("ai.trace.type") != "llm-invocation":
             return
+
+        input_tokens = trace.attributes["ai.llm.response.usage"]["inputTokens"]
+        output_tokens = trace.attributes["ai.llm.response.usage"]["outputTokens"]
+
         return [
             Measurement(
-                name="NrOfOInputTokens",
-                value=trace.response["usage"]["inputTokens"],
+                name="TotalTokens",
+                value=input_tokens + output_tokens,
                 unit=Unit.Count,
             ),
             Measurement(
-                name="NrOfOutputTokens",
-                value=trace.response["usage"]["outputTokens"],
+                name="InputTokens",
+                value=input_tokens,
                 unit=Unit.Count,
-                validation_passed=trace.response["usage"]["outputTokens"] < 30,  # added, just an example
+            ),
+            Measurement(
+                name="OutputTokens",
+                value=output_tokens,
+                unit=Unit.Count,
+                validation_passed=output_tokens <= 100,  # added, just an example
             ),
         ]
 ```
@@ -635,7 +679,7 @@ flowchart LR
     A --> B --> C --> D
 ```
 
-A case has a name and user inputs. Each user input will be fed to the agent sequentially in the same conversation:
+A case has a name (optional) and user inputs. Each user input will be fed to the agent sequentially in the same conversation:
 
 ```python
 my_case = Case(
@@ -743,79 +787,75 @@ case = Case(name="User wants a movie suggestion", user_input_producer=UserInputP
 traces = case.run(agent)
 
 for trace in traces:
-    print(trace)
+    print(trace.as_human_readable())
 ```
 
 Would print e.g.:
 
 ```
-======================================
-LLM TRACE (LlmCaseTrace)
-======================================
-To:              LLM
-Conversation ID: 01JD6X0YVVE97B0F8C0QXP8YT6
-Auth context:    None
-Created at:      2024-11-21 08:22:12.655000+00:00
-Additional info:
-  {}
-Request messages:
-  {'text': "I'd like to get a movie suggestion. What kind of movie would you recommend?"}
-Response message:
-  [{'text': "Okay, let's get a movie suggestion for you. What genre of movie would you like? I'll need that information to provide a relevant recommendation."}]
-Request (full):
-  ...
-Response (full):
-  ...
-======================================
-LLM TRACE (LlmCaseTrace)
-======================================
-To:              LLM
-Conversation ID: 01JD6X0YVVE97B0F8C0QXP8YT6
-Auth context:    None
-Created at:      2024-11-21 08:22:15.546000+00:00
-Additional info:
-  {}
-Request messages:
-  {'text': "I'd like to see a comedy. Can you suggest a funny movie I might enjoy?"}
-Response message:
-  [{'toolUse': {'toolUseId': 'tooluse_hahjynWhQzi86Zpwzt4Ygw', 'name': 'get_movie_suggestion', 'input': {'genre': 'comedy'}}}]
-Request (full):
-  ...
-Response (full):
-  ...
-======================================
-TOOL TRACE (ToolCaseTrace)
-======================================
-To:              TOOL
-Conversation ID: 01JD6X0YVVE97B0F8C0QXP8YT6
-Auth context:    None
-Created at:      2024-11-21 08:22:15.546000+00:00
-Additional info:
-  {}
-Request:
-  {"tool_name":"get_movie_suggestion", "tool_use_id":"tooluse_hahjynWhQzi86Zpwzt4Ygw", "tool_input":{"genre":"comedy"}}
-Response:
-  {"tool_response":{"tool_response":"The alleyways of Amsterdam (1996)"}, "latency_ms":0}
-======================================
-LLM TRACE (LlmCaseTrace)
-======================================
-To:              LLM
-Conversation ID: 01JD6X0YVVE97B0F8C0QXP8YT6
-Auth context:    None
-Created at:      2024-11-21 08:22:17.206000+00:00
-Additional info:
-  {}
-Request messages:
-  {'toolResult': {'toolUseId': 'tooluse_hahjynWhQzi86Zpwzt4Ygw', 'status': 'success', 'content': [{'json': {'tool_response': 'The alleyways of Amsterdam (1996)'}}]}}
-Response message:
-  [{'text': 'For a comedy movie suggestion, how about "The Alleyways of Amsterdam" from 1996?'}]
-Request (full):
-  ...
-Response (full):
-  ...
+[120027b89023dd54f59c50499b57b599/root/9e22ad550295191f] BedrockConverseAgent SERVER 2025-04-16T09:01:10.466Z - converse (ai.trace.type='converse' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+       Input: I'd like to get a movie recommendation. What genres or types of movies do you have suggestions for?
+    Response: I can provide movie suggestions for different genres. What genre would you like a recommendation for? Examples of genres are action, comedy, drama, romance, horror, sci-fi, etc.
+
+[120027b89023dd54f59c50499b57b599/9e22ad550295191f/1b2b94552c644558] BedrockConverseAgent CLIENT 2025-04-16T09:01:10.467Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+     Message: {'role': 'user', 'content': [{'text': "I'd like to get a movie recommendation. What genres or types of movies do you have suggestions for?"}]}
+
+[120027b89023dd54f59c50499b57b599/9e22ad550295191f/19c00ed498f0abee] BedrockConverseAgent CLIENT 2025-04-16T09:01:10.467Z - conversation-history-list (ai.trace.type='conversation-history-list' peer.service='memory:short-term' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+    Messages: [{'role': 'user', 'content': [{'text': "I'd like to get a movie recommendation. What genres or types of movies do you have suggestions for?"}]}]
+
+[120027b89023dd54f59c50499b57b599/9e22ad550295191f/fece03d8bc85f4d8] BedrockConverseAgent CLIENT 2025-04-16T09:01:10.467Z - llm-invocation (ai.trace.type='llm-invocation' peer.service='llm:claude-3-sonnet' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+Last message: [{'text': "I'd like to get a movie recommendation. What genres or types of movies do you have suggestions for?"}]
+    Response: {'message': {'role': 'assistant', 'content': [{'text': 'I can provide movie suggestions for different genres. What genre would you like a recommendation for? Examples of genres are action, comedy, dra
+              ma, romance, horror, sci-fi, etc.'}]}}
+
+[120027b89023dd54f59c50499b57b599/9e22ad550295191f/00bf227f03f6f4ae] BedrockConverseAgent CLIENT 2025-04-16T09:01:11.613Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+     Message: {'role': 'assistant', 'content': [{'text': 'I can provide movie suggestions for different genres. What genre would you like a recommendation for? Examples of genres are action, comedy, drama, romance,
+              horror, sci-fi, etc.'}]}
+
+[3fdef11a72df06eb74fba3d65402d0da/root/f6a5671219710173] BedrockConverseAgent SERVER 2025-04-16T09:01:12.835Z - converse (ai.trace.type='converse' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+       Input: I'm interested in comedies. Do you have any good comedy movie suggestions?
+    Response: The comedy movie suggestion is "The Alleyways of Amsterdam" from 1996. It sounds like an offbeat, quirky comedy set in the Netherlands. Let me know if you'd like another comedy recommendation or if th
+              at piqued your interest!
+
+[3fdef11a72df06eb74fba3d65402d0da/f6a5671219710173/fe6efe3b5c21310d] BedrockConverseAgent CLIENT 2025-04-16T09:01:12.835Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+     Message: {'role': 'user', 'content': [{'text': "I'm interested in comedies. Do you have any good comedy movie suggestions?"}]}
+
+[3fdef11a72df06eb74fba3d65402d0da/f6a5671219710173/6a1566cb25737d02] BedrockConverseAgent CLIENT 2025-04-16T09:01:12.835Z - conversation-history-list (ai.trace.type='conversation-history-list' peer.service='memory:short-term' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+    Messages: [{'role': 'user', 'content': [{'text': "I'd like to get a movie recommendation. What genres or types of movies do you have suggestions for?"}]}, {'role': 'assistant', 'content': [{'text': 'I can provi
+              de movie suggestions for different genres. What genre would you like a recommendation for? Examples of genres are action, comedy, drama, romance, horror, sci-fi, etc.'}]}, {'role': 'user', 'content':
+              [{'text': "I'm interested in comedies. Do you have any good comedy movie suggestions?"}]}]
+
+[3fdef11a72df06eb74fba3d65402d0da/f6a5671219710173/4723b2cb16046645] BedrockConverseAgent CLIENT 2025-04-16T09:01:12.835Z - llm-invocation (ai.trace.type='llm-invocation' peer.service='llm:claude-3-sonnet' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+Last message: [{'text': "I'm interested in comedies. Do you have any good comedy movie suggestions?"}]
+    Response: {'message': {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 'tooluse_Tf776MWLQ_iIyuYGsdvvTw', 'name': 'get_movie_suggestion', 'input': {'genre': 'comedy'}}}]}}
+
+[3fdef11a72df06eb74fba3d65402d0da/f6a5671219710173/b49ca36d024d0150] BedrockConverseAgent CLIENT 2025-04-16T09:01:13.832Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+     Message: {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 'tooluse_Tf776MWLQ_iIyuYGsdvvTw', 'name': 'get_movie_suggestion', 'input': {'genre': 'comedy'}}}]}
+
+[3fdef11a72df06eb74fba3d65402d0da/f6a5671219710173/bcc78bb3c1c1a110] BedrockConverseAgent CLIENT 2025-04-16T09:01:13.832Z - get_movie_suggestion (ai.trace.type='tool-invocation' peer.service='tool:get_movie_suggestion' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+       Input: {'genre': 'comedy'}
+      Output: The alleyways of Amsterdam (1996)
+
+[3fdef11a72df06eb74fba3d65402d0da/f6a5671219710173/c89ae710cadf9952] BedrockConverseAgent CLIENT 2025-04-16T09:01:13.832Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+     Message: {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_Tf776MWLQ_iIyuYGsdvvTw', 'status': 'success', 'content': [{'json': {'toolResponse': 'The alleyways of Amsterdam (1996)'}}]}}]}
+
+[3fdef11a72df06eb74fba3d65402d0da/f6a5671219710173/a83184f18d57e2e0] BedrockConverseAgent CLIENT 2025-04-16T09:01:13.832Z - conversation-history-list (ai.trace.type='conversation-history-list' peer.service='memory:short-term' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+    Messages: [{'role': 'user', 'content': [{'text': "I'd like to get a movie recommendation. What genres or types of movies do you have suggestions for?"}]}, {'role': 'assistant', 'content': [{'text': 'I can provi
+              de movie suggestions for different genres. What genre would you like a recommendation for? Examples of genres are action, comedy, drama, romance, horror, sci-fi, etc.'}]}, {'role': 'user', 'content':
+              [{'text': "I'm interested in comedies. Do you have any good comedy movie suggestions?"}]}, {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 'tooluse_Tf776MWLQ_iIyuYGsdvvTw', 'name': 'get_mo
+              vie_suggestion', 'input': {'genre': 'comedy'}}}]}, {'role': 'user', 'content': [{'toolResult': {'toolUseId': 'tooluse_Tf776MWLQ_iIyuYGsdvvTw', 'status': 'success', 'content': [{'json': {'toolRespon...
+
+[3fdef11a72df06eb74fba3d65402d0da/f6a5671219710173/b6a64ab8eb8f4cfc] BedrockConverseAgent CLIENT 2025-04-16T09:01:13.832Z - llm-invocation (ai.trace.type='llm-invocation' peer.service='llm:claude-3-sonnet' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+Last message: [{'toolResult': {'toolUseId': 'tooluse_Tf776MWLQ_iIyuYGsdvvTw', 'status': 'success', 'content': [{'json': {'toolResponse': 'The alleyways of Amsterdam (1996)'}}]}}]
+    Response: {'message': {'role': 'assistant', 'content': [{'text': 'The comedy movie suggestion is "The Alleyways of Amsterdam" from 1996. It sounds like an offbeat, quirky comedy set in the Netherlands. Let me k
+              now if you\'d like another comedy recommendation or if that piqued your interest!'}]}}
+
+[3fdef11a72df06eb74fba3d65402d0da/f6a5671219710173/1ade2dbc33d3db6a] BedrockConverseAgent CLIENT 2025-04-16T09:01:15.410Z - conversation-history-add (ai.trace.type='conversation-history-add' peer.service='memory:short-term' ai.conversation.id='01JRYX9AZGZQNYJTQ4V4T3SCGJ' ai.auth.context='null')
+     Message: {'role': 'assistant', 'content': [{'text': 'The comedy movie suggestion is "The Alleyways of Amsterdam" from 1996. It sounds like an offbeat, quirky comedy set in the Netherlands. Let me know if you\'
+              d like another comedy recommendation or if that piqued your interest!'}]}
 ```
 
-What you can see is that the agent asked the user a question because it needed more information (the genre, see first trace), and the user input producer provided an answer on behalf of the user: science fiction (see second trace).
+What you can see is that the agent asked the user a question because it needed more information (the genre, see first `SERVER` trace), and the user input producer provided an answer on behalf of the user: comedy (see second `SERVER` trace).
 
 Note that you can still provide `user_inputs` in the case as well: these will be played out first, and once these are exhausted the `user_input_producer` will be invoked for getting subsequent user inputs. This way, you can 'prime' a conversation.
 

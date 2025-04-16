@@ -49,7 +49,7 @@ from generative_ai_toolkit.conversation_history import (
     ConversationHistory,
     InMemoryConversationHistory,
 )
-from generative_ai_toolkit.tracer import Tracer, Trace, traced, NoopTracer
+from generative_ai_toolkit.tracer import Tracer, Trace, traced, InMemoryTracer
 from generative_ai_toolkit.utils.typings import ToolResultContent
 
 
@@ -268,7 +268,7 @@ class BedrockConverseAgent(Agent):
             self._conversation_history = conversation_history
             weakref.finalize(self, self._prune_instances_used)
         if not tracer:
-            self._tracer = NoopTracer()
+            self._tracer = InMemoryTracer(memory_size=50)
         else:
             if callable(tracer):
                 tracer = tracer()
