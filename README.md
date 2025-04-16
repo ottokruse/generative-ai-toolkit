@@ -2,17 +2,31 @@
 
 The **Generative AI Toolkit** is a lightweight library that covers the life cycle of LLM-based applications, including agents. Its purpose is to support developers in building and operating high quality LLM-based applications, over their entire life cycle, starting with the very first deployment, in an automated workflow.
 
-The Generative AI Toolkit makes it easy to measure and test the performance of LLM-based applications, during development as well as in production. Measurements and test results can be integrated seamlessly with Amazon CloudWatch Metrics.
+The Generative AI Toolkit makes it easy to measure and test the performance of LLM-based applications, during development as well as in production.
 
 The toolkit builds upon principles and methodologies detailed in our research paper:
 
 **[GENERATIVE AI TOOLKIT- A FRAMEWORK FOR INCREASING THE QUALITY OF LLM-BASED APPLICATIONS OVER THEIR WHOLE LIFE CYCLE](https://arxiv.org/abs/2412.14215)**.
 
-## Reference Architecture
+## Highlights
 
-The following is a reference architecture for a setup that uses the Generative AI Toolkit to implement an agent, collect traces, and run automated evaluation. The resulting metrics are fed back to the agent's developers via dashboards and alerts. Metrics are calculated and captured continuously, as real users interact with the agent, thereby giving the agent's developers insight into how the agent is performing at all times, allowing for continuous improvement:
+The Generative AI Toolkit helps you build reliable agents, where you as developer have full visibility into what your agents do, both during development and in production; when your agents interact with real users. To this end, Generative AI Toolkit captures traces for all interactions between your users and your agents, and for the agent's internal actions, such as LLM invocations and tool invocations. With these traces you can use the Generative AI Toolkit to evaluate your agents continuously.
 
-<img src="./assets/images/architecture.drawio.png" alt="Architecture" width="1200" />
+You can view the traces, as well as the collected metrics, in various developer friendly ways, e.g. with the web UI:
+
+<img src="./assets/images/ui-conversation.png" alt="UI Conversation Display Screenshot" title="UI Conversation Display" width="1200"/>
+
+Traces are also visible in AWS X-Ray (or any other OpenTelemetry compatible tool of your choosing):
+
+<img src="./assets/images/x-ray-trace-map.png" alt="AWS X-Ray Trace Map Screenshot" title="AWS X-Ray Trace Map" width="1200"/>
+
+Details of the traces, such as the LLM inputs and outputs, are visible in the trace timelines as metadata:
+
+<img src="./assets/images/x-ray-trace-segments-timeline.png" alt="AWS X-Ray Trace Segments Timeline Screenshot" title="AWS X-Ray Trace Segments Timeline" width="1200"/>
+
+Metrics can be emitted to Amazon CloudWatch easily, so you can create dashboards and alarms there, and tap into the full power of Amazon CloudWatch for observability:
+
+<img src="./assets/images/sample-metric.png" alt="Sample Amazon Cloud Metric" width="1200" />
 
 ## Key Terms
 
@@ -1012,13 +1026,30 @@ for conversation_measurements in results:
             )
 ```
 
-> Note: the above is exactly what happens for you if you use the `generative_ai_toolkit.run.evaluate.AWSLambdaRunner`, e.g. as is done by <a href="./{{ cookiecutter.package_name }}/lib/evaluation/measure.py">the evaluation Lambda function in the cookiecutter template</a>.
+> Note: the above is exactly what happens for you if you use the `generative_ai_toolkit.run.evaluate.AWSLambdaRunner`, see below.
 
 > Note: if you run the above in AWS Lambda, the custom metrics will now be generated, because AWS Lambda writes to Amazon CloudWatch Logs automatically. Elsewhere, you would still need to send the lines from `stdout` to Amazon CloudWatch Logs.
 
 After that, you can view the metrics in Amazon CloudWatch metrics, and you have the full functionality of Amazon CloudWatch Metrics at your disposal to graph these metrics, create alarms (e.g. based on threshold or anomaly), put on dashboards, etc:
 
 <img src="./assets/images/sample-metric.png" alt="Sample Amazon Cloud Metric" width="1200" />
+
+#### Using the `AWSLambdaRunner`
+
+Here's an example AWS Lambda function implementation that uses the `AWSLambdaRunner` to run evaluatations and emit metrics as EMF logs. You should attach this Lambda function to a DynamoDB stream attached to a table with traces (i.e. one that gets populated by the `DynamoDBTracer`):
+
+```python
+from generative_ai_toolkit.metrics.modules.latency import LatencyMetric
+from generative_ai_toolkit.run.evaluate import AWSLambdaRunner
+
+metrics = [
+    LatencyMetric(),
+]
+
+AWSLambdaRunner.configure(metrics=metrics, agent_name="{{cookiecutter.agent_name}}")
+```
+
+In your Lambda function definition, if the above file is stored as `index.py`, you would use `index.AWSLambdaRunner` as handler.
 
 ### 2.9 Deploying and Invoking the `BedrockConverseAgent`
 
