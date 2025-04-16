@@ -540,7 +540,7 @@ class NumberOfToolsUsedMetric(BaseMetric):
     def evaluate_conversation(self, conversation_traces, **kwargs):
         return Measurement(
             name="NumberOfToolsUsed",
-            value=len([trace for trace in conversation_traces if trace.to == "TOOL"]),
+            value=len([trace for trace in conversation_traces if trace.attributes.get("ai.trace.type") == "tool-invocation"]),
             unit=Unit.Count,
         )
 ```
@@ -887,16 +887,12 @@ The validator function will be invoked when the traces of the case are ran throu
 
 ```python
 def validate_weather_report(traces: Sequence[CaseTrace]):
-    last_message = traces[-1]
-    if not last_message.to == "LLM":
-        raise Exception("Expected last trace to be an LLM invocation") # Raising an exception works
-    last_output = last_message.response["output"]["message"]["content"][0]
-    if "text" not in last_output: # Returning a message works also
-        return "Expected last message to contain text"
-    if last_output["text"].startswith("The weather will be"):
+    root_trace = traces[0]
+    last_output = root_trace.attributes["ai.agent.response"]
+    if last_output.startswith("The weather will be"):
         # Test passed!
         return
-    return f"Unexpected message: {last_output["text"]}"
+    return f"Unexpected message: {last_output}"
 
 
 case1 = Case(
