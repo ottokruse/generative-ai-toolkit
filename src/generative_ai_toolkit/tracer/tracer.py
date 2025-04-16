@@ -375,8 +375,9 @@ class TeeTracer(BaseTracer):
         super().__init__(trace_context_provider=trace_context_provider)
         self._tracers = []
 
-    def add_tracer(self, tracer: BaseTracer):
+    def add_tracer(self, tracer: BaseTracer) -> "TeeTracer":
         self._tracers.append(tracer)
+        return self  # allow chaining add_tracer() calls
 
     def persist(self, trace: Trace):
         for tracer in self._tracers:

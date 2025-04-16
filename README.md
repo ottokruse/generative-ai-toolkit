@@ -28,6 +28,12 @@ Metrics can be emitted to Amazon CloudWatch easily, so you can create dashboards
 
 <img src="./assets/images/sample-metric.png" alt="Sample Amazon Cloud Metric" width="1200" />
 
+## Reference Architecture
+
+The following is a reference architecture for a setup that uses the Generative AI Toolkit to implement an agent, collect traces, and run automated evaluation. The resulting metrics are fed back to the agent's developers via dashboards and alerts. Metrics are calculated and captured continuously, as real users interact with the agent, thereby giving the agent's developers insight into how the agent is performing at all times, allowing for continuous improvement:
+
+<img src="./assets/images/architecture.drawio.png" alt="Architecture" width="1200" />
+
 ## Key Terms
 
 To fully utilize the Generative AI Toolkit, it’s essential to understand the following key terms:
@@ -1053,17 +1059,53 @@ In your Lambda function definition, if the above file is stored as `index.py`, y
 
 ### 2.9 Deploying and Invoking the `BedrockConverseAgent`
 
-The [Cookiecutter template](#cookiecutter-template) includes an AWS CDK Stack that shows how to deploy this library on AWS Lambda (as per the diagram at the top of this README):
+A typical deployment of an agent using the Generative AI Toolkit would be, per the [reference architecture](#reference-architecture) mentioned above:
 
-- An AWS Lambda Function that is exposed as Function URL, so that you can use HTTP to send user input to the agent, and get a streaming response back. This Function URL has IAM auth enabled, and must be invoked with valid AWS credentials, see below. The Function URL accepts POST requests with the user input passed as body: `{"user_input": "What is the capital of France?"}`. If a conversation is to be continued, pass its ID in HTTP header `x-conversation-id`. Correspondingly when a new conversation is started, its ID will be passed back in the `x-conversation-id` response header.
-- An Amazon DynamoDB table to store conversation history and traces.
-- An AWS Lambda Function, that is attached to the DynamoDB table stream, to run `GenerativeAIToolkit.eval()` on the collected traces.
+1. An AWS Lambda Function that is exposed as Function URL, so that you can use HTTP to send user input to the agent, and get a streaming response back. The Function URL would e.g. accept POST requests with the user input passed as body: `{"user_input": "What is the capital of France?"}`. If a conversation is to be continued, you could e.g. pass its ID in HTTP header `x-conversation-id`. Correspondingly, when a new conversation is started, its ID would e.g. be passed back in the `x-conversation-id` response header. You can use the `Runner` from Generative AI Toolkit, to implement the Lambda function exactly like this, see below.
+2. An Amazon DynamoDB table to store conversation history and traces. This table has a stream enabled. The AWS Lambda function, your agent, would write its traces to this table. Additionally (using the `TeeTracer` and the `OtlpTracer`) the agent would send the traces to AWS X-Ray for developer inspection.
+3. An AWS Lambda Function, that is attached to the DynamoDB table stream, to run `GenerativeAIToolkit.eval()` on the collected traces. This Lambda function would write the collected measurements to stdout in EMF format (see above), to make the measurements available in Amazon CloudWatch Metrics.
 
-See <a href="./{{ cookiecutter.package_name }}/lib/streaming-agent.ts">streaming-agent.ts</a>.
+#### Using the `Runner` to run your agent as Lambda function
+
+The following code shows how you can implement your Generative AI Toolkit based agent as Lambda function, per the description above.
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.conversation_history import DynamoDbConversationHistory
+from generative_ai_toolkit.run.agent import Runner
+from generative_ai_toolkit.tracer import TeeTracer
+from generative_ai_toolkit.tracer.otlp import OtlpTracer
+from generative_ai_toolkit.tracer.dynamodb import DynamoDbTracer
+
+
+class MyAgent(BedrockConverseAgent):
+    def __init__(self):
+        super().__init__(
+            model_id="eu.anthropic.claude-3-sonnet-20240229-v1:0",
+            system_prompt="You are a helpful assistant",
+            # Conversation History factory:
+            conversation_history=lambda: DynamoDbConversationHistory(
+                table_name="messages"
+            ),
+            # Tracer factory:
+            tracer=lambda: TeeTracer()
+            .add_tracer(DynamoDbTracer(table_name="traces"))
+            .add_tracer(OtlpTracer()),
+        )
+
+
+Runner.configure(
+    agent=MyAgent,  # Agent factory
+)
+```
+
+In your Lambda function definition, if the above file is stored as `index.py`, you would use `index.Runner` as handler.
+
+Note that you must use the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter) to run the `Runner` on AWS Lambda.
 
 #### Invoking the AWS Lambda Function URL with the `IamAuthInvoker`
 
-Invoking an AWS Lambda Function URL with IAM auth entails that you must [sign the request with AWS Signature V4 as explained here](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html).
+If you use the `Runner` just explained, you would deploy your agent as an AWS Lambda Function that is exposed as Function URL. You should enable IAM Auth, in which case you must [sign all requests with AWS Signature V4 as explained here](https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html).
 
 This library has helper code on board to make that more easy for you. You can simply call a function and pass the user input. The response stream is returned as a Python iterator:
 
@@ -1112,7 +1154,7 @@ curl -v \
 
 The `Runner` is a WSGI application and can be run with any compatible server, such as `gunicorn`.
 
-To support concurrency, make sure you pass an Agent factory to the Runner configuration, and not an Agent instance. Agent instances do not support concurrency and are meant to handle one request at a time. The same is true for Conversation History, pass a factory to your agent, not an instance.
+To support concurrency, make sure you pass an Agent factory to the Runner configuration, and not an Agent instance. Agent instances do not support concurrency and are meant to handle one request at a time. The same is true for Conversation History and Tracers, pass a factory to your agent, not an instance.
 
 For example:
 
@@ -1129,7 +1171,7 @@ class MyAgent(BedrockConverseAgent):
             system_prompt="You are a helpful assistant",
             # Conversation History factory:
             conversation_history=lambda: DynamoDbConversationHistory(
-                table_name="traces"
+                table_name="messages"
             ),
         )
 
@@ -1202,18 +1244,19 @@ The Generative AI Toolkit provides a local, web-based user interface (UI) to hel
 **Key Features:**
 
 - **Trace Inspection:** View the entire sequence of interactions, including user messages, agent responses, and tool invocations. Traces are displayed in chronological order, accompanied by detailed metadata (timestamps, token counts, latencies, costs), making it easier to pinpoint performance bottlenecks or unexpected behaviors.
+
 - **Conversation Overview:** Each conversation is presented as a cohesive flow. You can navigate through every turn in a conversation to see how the context evolves over time, how the agent utilizes tools, and how different system prompts or model parameters influence the responses.
 
 - **Metrics and Evaluation Results:** When you run `GenerativeAIToolkit.eval()` on the collected traces, the UI provides a clear visualization of the results. This includes SQL query accuracy metrics, cost estimates, latency measurements, and custom validation checks. The UI helps you identify which cases passed or failed, and the reasons why.
 
-- **Filtering and Sorting:** For large sets of conversations or test cases, you can filter and sort them. For example, focus on failed cases only, or examine conversations related to a specific model configuration.
-
 Below are two example screenshots of the UI in action:
 
 _In this screenshot, you can see multiple conversations along with their metrics and pass/fail status. Clicking the View button for a conversation reveals its detailed traces and metrics:_
+
 <img src="./assets/images/ui-measurements-overview.png" alt="UI Measurements Overview Screenshot" title="UI Measurements Overview" width="1200"/>
 
 _Here, a single conversation’s full trace is displayed. You can see user queries, agent responses, any tool calls made, and evaluation details like latency and cost. This view helps you understand how and why the agent produced its final answer:_
+
 <img src="./assets/images/ui-conversation.png" alt="UI Conversation Display Screenshot" title="UI Conversation Display" width="1200"/>
 
 **How to Launch the UI:**
@@ -1221,13 +1264,13 @@ _Here, a single conversation’s full trace is displayed. You can see user queri
 After generating and evaluating traces, start the UI by calling:
 
 ```python
-results.start_ui()
+results.ui.launch()
 ```
 
 This command runs a local web server (at http://localhost:7860) where you can interact with the web UI. When you have finished inspecting your conversations and metrics, you can shut down the UI by running:
 
 ```python
-results.stop_ui()
+results.ui.close()
 ```
 
 The Web UI complements the command-line and code-based workflows, providing a more visual and interactive approach to debugging. By using this interface, you can refine your LLM-based application more efficiently before deploying it to production.
