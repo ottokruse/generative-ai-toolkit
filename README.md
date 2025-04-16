@@ -1083,12 +1083,10 @@ class MyAgent(BedrockConverseAgent):
         super().__init__(
             model_id="eu.anthropic.claude-3-sonnet-20240229-v1:0",
             system_prompt="You are a helpful assistant",
-            # Conversation History factory:
-            conversation_history=lambda: DynamoDbConversationHistory(
+            conversation_history=DynamoDbConversationHistory(
                 table_name="messages"
             ),
-            # Tracer factory:
-            tracer=lambda: TeeTracer()
+            tracer=TeeTracer()
             .add_tracer(DynamoDbTracer(table_name="traces"))
             .add_tracer(OtlpTracer()),
         )
@@ -1169,8 +1167,7 @@ class MyAgent(BedrockConverseAgent):
         super().__init__(
             model_id="anthropic.claude-3-sonnet-20240229-v1:0",
             system_prompt="You are a helpful assistant",
-            # Conversation History factory:
-            conversation_history=lambda: DynamoDbConversationHistory(
+            conversation_history=DynamoDbConversationHistory(
                 table_name="messages"
             ),
         )
