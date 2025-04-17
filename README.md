@@ -66,6 +66,7 @@ To fully utilize the Generative AI Toolkit, it’s essential to understand the f
 2.8 [CloudWatch Custom Metrics](#28-cloudwatch-custom-metrics)  
 2.9 [Deploying and Invoking the BedrockConverseAgent](#29-deploying-and-invoking-the-bedrockconverseagent)  
 2.10 [Web UI for Conversation Debugging](#210-web-ui-for-conversation-debugging)
+2.11 [Mocking and Testing](#211-mocking-and-testing)
 
 ### 2.1 Installation
 
@@ -995,36 +996,34 @@ results = GenerativeAIToolkit.eval(
 )
 for conversation_measurements in results:
     # Emit EMF logs for measurements at conversation level:
-    last_trace = conversation_measurements.traces[-1].trace
-    timestamp = int(last_trace.trace_id.timestamp.timestamp() * 1000)
+    last_trace = conversation_measurements.traces[0].trace
     for measurement in conversation_measurements.measurements:
         logger.metric(
             measurement,
             conversation_id=conversation_measurements.conversation_id,
-            auth_context=last_trace.auth_context,
+            auth_context=last_trace.attributes.get("auth_context"),
             additional_info=measurement.additional_info,
             namespace="GenerativeAIToolkit",
             common_dimensions={
                 "MyCommonDimension": "MyDimensionValue"
             },
-            timestamp=timestamp,
+            timestamp=int(last_trace.started_at.timestamp() * 1000),
         )
     # Emit EMF logs for measurements at trace level:
     for conversation_traces in conversation_measurements.traces:
         trace = conversation_traces.trace
-        timestamp = int(trace.trace_id.timestamp.timestamp() * 1000)
         for measurement in conversation_traces.measurements:
             logger.metric(
                 measurement,
                 conversation_id=conversation_measurements.conversation_id,
-                auth_context=trace.auth_context,
+                auth_context=trace.attributes.get("auth_context"),
                 trace_id=trace.trace_id,
                 additional_info=measurement.additional_info,
                 namespace="GenerativeAIToolkit",
                 common_dimensions={
                     "MyCommonDimension": "MyDimensionValue"
                 },
-                timestamp=timestamp,
+                timestamp=int(trace.started_at.timestamp() * 1000),
             )
 ```
 
@@ -1264,4 +1263,196 @@ This command runs a local web server (at http://localhost:7860) where you can in
 results.ui.close()
 ```
 
-The Web UI complements the command-line and code-based workflows, providing a more visual and interactive approach to debugging. By using this interface, you can refine your LLM-based application more efficiently before deploying it to production.
+### 2.11 Mocking and Testing
+
+As with all software, you'll want to test your agent. You can use above mentioned [Cases](#25-repeatable-cases) for evaluating your agent in an end-to-end testing style. You may also want to create integration tests and unit tests, e.g. to target specific code paths in isolation. For such tests you can use the following tools from the Generative AI Toolkit:
+
+- The **`MockBedrockConverse`** class allows you to **mock** the Bedrock Converse API in a conversational way, so that you can steer your agent towards particular actions that you want to test. The LLM is the brain of the agent, so if you control the brain, you control the agent.
+- The **`Expect`** class allows you to express your assertions on test executions in a concise way. With the `Expect` class you write assertions against the collected traces, so you can test your agent on a deep level. You can write assertions against everything the agent traces, e.g. all tool invocations, LLM invocations, access of conversational memory, user input, agent response, etc.
+
+Let's see both in action. Here's a sample agent that we'll test. Note that we're instantiating it with the Bedrock Converse API mock:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.test import Expect, Case
+from generative_ai_toolkit.test.mock import MockBedrockConverse
+
+# create mock:
+mock = MockBedrockConverse()
+
+agent = BedrockConverseAgent(
+    model_id="amazon.nova-lite-v1:0",
+    session=mock.session(),  # use mock
+)
+
+def weather_tool(city: str, unit: str = "celsius") -> str:
+    """
+    Get the weather report for a city
+
+    Parameters
+    ---
+    city: str
+      The city
+    unit: str
+      The unit of degrees (e.g. celsius)
+    """
+    return f"The weather in {city} is 20 degrees {unit}."
+
+agent.register_tool(weather_tool)
+```
+
+#### My first unit test
+
+Now, to write a test, we load mock responses into our mock. When the agent then invokes the Amazon Bedrock Converse API, it will actually invoke our mock instead, and thus use the responses we prepared:
+
+```python
+# prepare mock response:
+sample_response = "Hello, how can I help you today"
+mock.add_output(text_output=[sample_response])
+
+# invoke agent:
+response = agent.converse("Hi there!")
+
+# assert the agent's response matches our expectation:
+assert response == sample_response
+
+# equivalent to the assert statement:
+Expect(agent.traces).agent_text_response.to_equal(sample_response)
+```
+
+#### Preparing a sequence of responses
+
+The following example shows how the mock responses are played out in sequence:
+
+```python
+# reset agent and mock:
+agent.reset()
+mock.reset()
+
+# prepare mock responses:
+sample_response1 = "Hello, how can I help you today"
+mock.add_output(text_output=[sample_response1])
+sample_response2 = "I don't have a name"
+mock.add_output(text_output=[sample_response2])
+
+# run conversation through:
+Case(["Hi there!", "What's your name?"]).run(agent)
+
+# check agent responses:
+Expect(agent.traces).agent_text_response.at(0).to_equal(sample_response1)
+Expect(agent.traces).agent_text_response.to_equal(sample_response2)
+```
+
+#### Testing tool invocations
+
+It becomes more interesting if you want to test tool invocations. The sequence under the hood may then be:
+
+1. Agent invokes LLM --> LLM tells it to invoke a tool
+2. Agent invokes tool
+3. Agent invokes LLM with tool results --> LLM tells it to return a response to the user
+
+Here's how to test that. Notice how the `Expect` class allows you to test the inner workings of the agent, e.g. the tool invocations:
+
+```python
+# reset agent and mock:
+agent.reset()
+mock.reset()
+
+# prepare mock responses, including a tool use:
+mock.add_output(text_output=["Okay, let me check the weather for you."], tool_use_output=[{"name": "weather_tool", "input": {"city": "Amsterdam"}}])
+mock.add_output(text_output=["It's nice and sunny in Amsterdam!"])
+
+# run conversation through:
+Case(["Hi there! What's the weather like in Amsterdam?"]).run(agent)
+
+# check agent responses, and tool invocations:
+Expect(agent.traces).user_input.to_include("What's the weather like in Amsterdam?")
+Expect(agent.traces).tool_invocations.to_have_length()
+Expect(agent.traces).tool_invocations.to_include("weather_tool").with_input({"city": "Amsterdam"}).with_output("The weather in Amsterdam is 20 degrees celsius.")
+Expect(agent.traces).agent_text_response.to_equal("Okay, let me check the weather for you.\nIt's nice and sunny in Amsterdam!")
+```
+
+#### Mixing mock and real responses
+
+You can also mix mock reponses and real response. E.g. you may want to 'prime' a conversation by first using mock responses, and after that allow the agent to invoke the real Amazon Bedrock Converse API:
+
+```python
+# reset agent and mock:
+agent.reset()
+mock.reset()
+
+# prepare mock responses, including a tool use:
+mock.add_output(text_output=["Okay, let me check the weather for you."], tool_use_output=[{"name": "weather_tool", "input": {"city": "Amsterdam"}}])
+
+# allow the agent to invoke Bedrock once:
+mock.add_real_response()
+
+# run conversation through:
+Case(["Hi there! What's the weather like in Amsterdam?"]).run(agent)
+
+# check agent responses, and tool invocations:
+Expect(agent.traces).tool_invocations.to_have_length()
+Expect(agent.traces).tool_invocations.to_include("weather_tool").with_input({"city": "Amsterdam"}).with_output("The weather in Amsterdam is 20 degrees celsius.")
+Expect(agent.traces).user_input.to_include("What's the weather like in Amsterdam?")
+
+# We have to be a bit more lenient with our assertion now, because the agent's response is not deterministic anymore!:
+Expect(agent.traces).agent_text_response.to_include("20")
+```
+
+#### Usage with Pytest
+
+Here's a Pytest example:
+
+```python
+import pytest
+
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.test import Expect, Case
+from generative_ai_toolkit.test.mock import MockBedrockConverse
+
+@pytest.fixture
+def mock_bedrock_converse():
+    mock = MockBedrockConverse()
+    yield mock
+    if mock.mock_responses:
+        raise Exception("Still have unconsumed mock responses")
+
+@pytest.fixture
+def my_agent(mock_bedrock_converse):
+    agent = BedrockConverseAgent(
+        model_id="amazon.nova-lite-v1:0",
+        session=mock_bedrock_converse.session(),  # use mock
+    )
+
+    def weather_tool(city: str, unit: str = "celsius") -> str:
+        """
+        Get the weather report for a city
+
+        Parameters
+        ---
+        city: str
+        The city
+        unit: str
+        The unit of degrees (e.g. celsius)
+        """
+        return f"The weather in {city} is 20 degrees {unit}."
+
+    agent.register_tool(weather_tool)
+    yield agent
+
+def test_agent(my_agent, mock_bedrock_converse):
+    sample_response1 = "Hello, how can I help you today"
+    mock_bedrock_converse.add_output(text_output=[sample_response1])
+    sample_response2 = "I don't have a name"
+    mock_bedrock_converse.add_output(text_output=[sample_response2])
+
+    # run conversation through:
+    Case(["Hi there!", "What's your name?"]).run(my_agent)
+
+    # check agent responses:
+    Expect(my_agent.traces).agent_text_response.at(0).to_equal(sample_response1)
+    Expect(my_agent.traces).agent_text_response.to_equal(sample_response2)
+
+```
+
+Note that since we're using Pytest fixtures to provide a new mock and agent for each test case, we don't have to call `reset()` on them.

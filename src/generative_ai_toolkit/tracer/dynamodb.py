@@ -113,7 +113,7 @@ class DynamoDbTracer(BaseTracer):
             trace = self.item_to_trace(item, traces)
             traces[trace.span_id] = trace
 
-        return list(sorted(traces.values(), key=lambda t: t.started_at))
+        return sorted(traces.values(), key=lambda t: t.started_at)
 
     @staticmethod
     def item_to_trace(

@@ -42,19 +42,19 @@ RealResponse = Literal["RealResponse"]
 class MockBedrockConverse:
     def __init__(self, session: boto3.session.Session | None = None) -> None:
         self.real_client = (session or boto3).client("bedrock-runtime")
-        self.trajectory: list[NonStreamingResponse | RealResponse] = []
+        self.mock_responses: list[NonStreamingResponse | RealResponse] = []
 
     def reset(self):
-        self.trajectory = []
+        self.mock_responses = []
 
     def _converse(
         self, **kwargs: Unpack[ConverseRequestRequestTypeDef]
     ) -> NonStreamingResponse:
-        if len(self.trajectory) == 0:
-            raise Exception(
-                f"No more response to provide in mock trajectory. Last message: {kwargs.get("messages", [])[-1]}"
+        if len(self.mock_responses) == 0:
+            raise RuntimeError(
+                f"Exhausted all mock responses, but need to reply to message: {kwargs.get("messages", [])[-1]}"
             )
-        response, *self.trajectory = self.trajectory
+        response, *self.mock_responses = self.mock_responses
         if response == "RealResponse":
             response = cast(NonStreamingResponse, self.real_client.converse(**kwargs))
         return response
@@ -71,7 +71,7 @@ class MockBedrockConverse:
         return mock_session
 
     def add_raw_response(self, response: NonStreamingResponse):
-        self.trajectory.append(response)
+        self.mock_responses.append(response)
 
     def _get_raw_response(self, message_content: list[MessageContent]):
         if not message_content:
@@ -115,7 +115,7 @@ class MockBedrockConverse:
             {"toolUse": {**t, "toolUseId": uuid4().hex}} for t in tool_use_output
         ]
         texts: list[TextContent] = [{"text": t} for t in text_output]
-        self.trajectory.append(self._get_raw_response([*tool_uses, *texts]))
+        self.mock_responses.append(self._get_raw_response([*tool_uses, *texts]))
 
     def add_real_response(self):
-        self.trajectory.append("RealResponse")
+        self.mock_responses.append("RealResponse")

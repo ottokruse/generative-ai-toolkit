@@ -409,7 +409,7 @@ def measurements_ui(
     def measurements_sort_key(m: ConversationMeasurements):
         return m.case_nr, m.permutation_nr, m.run_nr, m.traces[0].trace.started_at
 
-    all_measurements = sorted(list(measurements), key=measurements_sort_key)
+    all_measurements = sorted(measurements, key=measurements_sort_key)
 
     def show_conversation(
         conversation_index: int,

@@ -158,7 +158,7 @@ def measure(
                         common_dimensions={
                             "AgentName": AWSLambdaRunner.agent_name,
                         },
-                        timestamp=int(last_trace.started_at.timestamp() * 1000),
+                        timestamp=int(trace.started_at.timestamp() * 1000),
                     )
     except TimeoutError:
         logger.error("GenerativeAIToolkit evaluation timed out")

@@ -222,6 +222,9 @@ class GenerativeAIToolkit:
             if not conversation_traces:
                 raise ValueError("Empty conversation")
 
+            conversation_traces = sorted(
+                conversation_traces, key=lambda trace: trace.started_at
+            )
             conversation_id, case = get_conversation_metadata(conversation_traces)
 
             first_trace = conversation_traces[0]
@@ -340,7 +343,7 @@ class GenerativeAIToolkit:
         :param cases: the cases
         :param agent_factory: Callable that should return a new Agent instance.
         :param agent_parameters: Mapping of parameter names to possible values, to be passed as keyword arguments to the supplied agent_factory.
-        :param executor: Executor instance for running the cases in parallel. If not provided, a default ThreadPoolExecutor will be used.
+        :param max_case_workers: Maximum nr of workers for the ThreadPoolExecutor.
         :return: Sequence of sequences of Trace instances.
         """
 
