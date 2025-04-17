@@ -15,7 +15,7 @@
 from typing import Sequence
 from generative_ai_toolkit.metrics import BaseMetric, Measurement, Unit
 from generative_ai_toolkit.tracer import Trace
-from generative_ai_toolkit.test import CaseTrace
+from generative_ai_toolkit.test import CaseTrace, user_conversation_from_trace
 
 
 class TemplateMetric(BaseMetric):
@@ -37,132 +37,54 @@ class TemplateMetric(BaseMetric):
     ================
     A trace is a data structure that captures what the agent "does" in full detail.
 
-    There are 2 types of traces, LLM traces and Tool traces.
+    Generative AI Toolkit uses the OpenTelemetry span model for traces, however we chose to keep the name "trace". So, a trace in Generative AI Toolkit is what
+    OpenTelemetry calls a span.
 
-    - An LLM trace contains the interaction between the agent and the LLM model.
-      It includes the request from the user, the response from the LLM, and relevant metadata.
-    - A Tool trace contains the interaction between the agent and a tool, i.e. a tool invocation.
-      It includes the input to the tool, the output from the tool, and relevant metadata.
+    Traces in Generative AI Toolkit have the following data model (closely aligned with OpenTelemetry):
 
-    LLM Trace Structure
-    -------------------
+    - span_name (str)
+    - span_kind (str, possible values: "INTERNAL", "SERVER", "CLIENT")
+    - started_at (datetime)
+    - ended_date (datetime)
+    - trace_id (str)
+    - span_id (str)
+    - parent_span (Trace, a pointer to the parent Trace)
+    - span_status (str, possible values "UNSET", "OK", "ERROR")
+    - resource_attributes (dict, e.g. the standard "service.name" field would be in here)
+    - scope (TraceScope, which is a name and a version)
+    - attributes (dict)
+
+    Many details of traces are stored as attributes. For example, a trace of an LLM invocation would store its details as attributes, see next.
+
+    LLM invocation Trace attributes example
+    ---------------------------------------
     {
-        "to": "LLM",
-        "conversation_id": "unique-conversation-id",
-        "trace_id": "unique-trace-id",
-        "created_at": "timestamp",
-        "request": {
-            "modelId": "model-name",
-            "inferenceConfig": {
-                "temperature": 0.7
-            },
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "text": "User's first input text message."
-                        }
-                    ]
-                },
-                {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "text": "Assistant's first response text message (that was the output of a prior LLM call)"
-                        }
-                    ]
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "text": "User's second input text message."
-                        }
-                    ]
-                },
-            ],
-            "system": [
-                {
-                    "text": "System instructions provided to the assistant."
-                }
-            ],
-            "toolConfig": {
-                "tools": [
-                    {
-                        "toolSpec": {
-                            "name": "tool_name",
-                            "description": "Description of the tool available to the LLM.",
-                            "inputSchema": {
-                                "json": {
-                                    "type": "object",
-                                    "properties": {}
-                                }
-                            }
-                        }
-                    }
-                ]
-            }
-        },
-        "response": {
-            "output": {
-                "message": {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "text": "The newly generated response text from the assistant."
-                        }
-                    ]
-                }
-            },
-            "usage": {
-                "inputTokens": 1040,
-                "outputTokens": 50,
-                "totalTokens": 1090
-            },
-            "metrics": {
-                "latencyMs": 2000
-            }
-        },
+      'peer.service': 'llm:claude-3-sonnet',
+      'ai.trace.type': 'llm-invocation',
+      'ai.llm.request.inference.config': {},
+      'ai.llm.request.messages': [{'role': 'user', 'content': [{'text': "What's the capital of France?"}]}],
+      'ai.llm.request.model.id': 'anthropic.claude-3-sonnet-20240229-v1:0',
+      'ai.llm.request.system': None,
+      'ai.llm.request.tool.config': None,
+      'ai.llm.response.output': {'message': {'role': 'assistant', 'content': [{'text': 'The capital of France is Paris.'}]}},
+      'ai.llm.response.stop.reason': 'end_turn',
+      'ai.llm.response.usage': {'inputTokens': 14, 'outputTokens': 10, 'totalTokens': 24},
+      'ai.llm.response.metrics': {'latencyMs': 350},
+      'ai.conversation.id': '01JRXF2JHXACD860A6P7N0MXER',
+      'ai.auth.context': None
     }
 
-    Key Components:
-    1. **conversation_id**: Unique ID of the conversation.
-    2. **trace_id**: Unique ID for this trace in the conversation.
-    3. **created_at**: Timestamp when the trace was created.
-    4. **request**: Contains the user's message, system instructions, and tool configurations.
-        - **modelId**: The model ID used for the inference.
-        - **inferenceConfig**: Parameters used for the model inference (e.g., temperature, a float).
-        - **messages**: A list of messages exchanged, including both user input and assistant responses.
-        - **system**: Any system-level instructions provided to the assistant.
-        - **toolConfig**: Configuration of tools available to the assistant during inference.
-    5. **response**: Contains the assistant’s response message and metrics.
-        - **output**: The assistant's output message.
-        - **usage**: Contains information about token usage (input, output, total).
-            - **inputTokens**, **outputTokens**, **totalTokens**: Integers representing token counts.
-        - **metrics**: Latency and other response-related metrics.
-            - **latencyMs**: Response latency in milliseconds (an integer).
-
-    Tool Trace Structure
-    --------------------
+    Tool invocation attributes example
+    ----------------------------------
     {
-      "to": "TOOL",
-      "conversation_id": "unique-conversation-id",
-      "trace_id": "unique-trace-id",
-      "created_at": "timestamp",
-      "request": {
-        "tool_input": {
-          "param": "value"
-        },
-        "tool_name": "the name of the tool",
-        "tool_use_id": "unique ID"
-      },
-      "response": {
-        "latency_ms": 123,
-        "tool_response": {
-          "key": "value"
-        }
-      },
+      'peer.service': 'tool:weather_inquiry',
+      'ai.trace.type': 'tool-invocation',
+      'ai.tool.name': 'weather_inquiry',
+      'ai.tool.use.id': 'tooluse_DGBOHaddTh2Rvg9QhVXgDg',
+      'ai.tool.input': {'latitude_longitude_list': [[52.00867, 4.3525599999999995]]},
+      'ai.tool.output': {'forecast': [{'latitude': 52.00867, 'longitude': 4.3525599999999995, 'temperature': 13, 'precipitation_chance': 0}]},
+      'ai.conversation.id': '01JS1JHTE7R4QWHDXP28C0J6RB',
+      'ai.auth.context': None
     }
 
     Case Traces
@@ -209,27 +131,27 @@ class TemplateMetric(BaseMetric):
 
         measurements: list[Measurement] = []
 
-        if trace.to != "LLM":
+        if trace.attributes.get("ai.trace.type") != "llm-invocation":
             # Many metrics you write would focus on either LLM traces or Tool traces.
             # For example, the sample implementation below is for LLM traces.
-            # Therefore, we don't look at Tool traces in this Custom Metric, and simply return:
+            # Therefore, we don't look at other traces in this Custom Metric, and simply return:
             return
 
-        # 1. Accessing the conversation with the user
-        # For LLM traces, the `trace.user_conversation` contains a list of text messages exchanged between the user and the assistant so far.
-        # This works, because all past messages must be included upon invoking the LLM as part of a conversation.
-        # This is a convenience method; you can also access the messages directly in `trace.request["messages"]` and `trace.response["output"]["message"]`,
-        # however that may also contain messages related to tool usage.
+        # Accessing the conversation with the user can be done with the following helper utility.
+        # This just gets the messages from the attributes ai.llm.request.messages and ai.llm.response.output,
+        # and filters the tool uses and results out, so you're left with just the "spoken" conversation between agent and user.
+        # Note that this works at single trace level, because each LLM invocation would successively include prior messages from the conversation.
+        user_conversation = user_conversation_from_trace(trace)
 
         # The last message from the user:
         user_messages = [
-            msg["text"] for msg in trace.user_conversation if msg["role"] == "user"
+            msg["text"] for msg in user_conversation if msg["role"] == "user"
         ]
         last_user_message = user_messages[-1]
 
         # The last message from the agent:
         agent_messages = [
-            msg["text"] for msg in trace.user_conversation if msg["role"] == "assistant"
+            msg["text"] for msg in user_conversation if msg["role"] == "assistant"
         ]
         last_agent_message = agent_messages[-1]
 
@@ -241,14 +163,15 @@ class TemplateMetric(BaseMetric):
         )
 
         # 2. Accessing the tool invocations
-        # For LLM traces, the `trace.invocations` contains a list of tool invocations that have taken place so far.
-        # This works, because all past tool invocations must be included upon invoking the LLM as part of a conversation.
-        # This is a convenience method; you can also access the tool invocations directly in `trace.request["messages"]`,
-        # however that may also contain text messages from and to the user.
-        # Here is a simple metric that measures how many unique tools where used:
+        # Here is a simple metric that measures how many unique tools where used (as captured in the LLM trace).
+        # Note that this works at single trace level, because each LLM invocation would successively include prior messages from the conversation.
         tools_used = set()
-        for invocation in trace.tool_invocations:
-            tools_used.add(invocation["tool_name"])
+        for msg in trace.attributes.get("ai.llm.request.messages", []):
+            if msg["role"] == "assistant":
+                for content in msg["content"]:
+                    if "toolUse" in content:
+                        tools_used.add(content["toolUse"]["name"])
+
         measurements.append(
             Measurement(
                 name="UniqueToolsUsedInConversation",
@@ -277,10 +200,10 @@ class TemplateMetric(BaseMetric):
             )
         )
 
-        # 4. For LLM traces, the `trace.response` contains details about the assistant's response, including the message content,
+        # 4. For LLM traces, the 'ai.llm.response.*' attributes contains details about the assistant's response, including the message content,
         # token usage, stop reasons, and other metadata. You can evaluate this section to test the output data.
         # For example, it is likely you want to measure tokens and latency:
-        input_tokens = trace.response["usage"]["inputTokens"]
+        input_tokens = trace.attributes["ai.llm.response.usage"]["inputTokens"]
         measurements.append(
             Measurement(
                 name="InputTokens",
@@ -288,7 +211,7 @@ class TemplateMetric(BaseMetric):
             )
         )
 
-        output_tokens = trace.response["usage"]["outputTokens"]
+        output_tokens = trace.attributes["ai.llm.response.usage"]["outputTokens"]
         measurements.append(
             Measurement(
                 name="OutputTokens",
@@ -299,13 +222,15 @@ class TemplateMetric(BaseMetric):
         measurements.append(
             Measurement(
                 name="LlmLatencyMs",
-                value=float(trace.response["metrics"]["latencyMs"]),
+                value=float(trace.attributes["ai.llm.response.metrics"]["latencyMs"]),
             )
         )
 
         # 5. For traces that the agent generates when it runs a case, you can access the case object like so:
         if isinstance(trace, CaseTrace):
-            case_ = trace.case  # Note: This attribute is only there, when you run cases through the agent (e.g. while developing and testing).
+            case_ = (
+                trace.case
+            )  # Note: This attribute is only there, when you run cases through the agent (e.g. while developing and testing).
 
             # Let's pretend that based on the expectations from the case, we want to measure the quality of the conversation,
             # and we'll do so by measuring the nr of similar words between the last user message and the expectation:
@@ -341,7 +266,7 @@ class TemplateMetric(BaseMetric):
         - The first response from the agent to the user contains a question
 
         Args:
-            conversation (Sequence[Trace]): The sequence of trace objects that contain the requests and responses to the LLM and tools.
+            conversation (Sequence[Trace]): The sequence of trace objects that contain e.g.the requests and responses to the LLM and tools.
             **kwargs: Additional keyword arguments for customization (optional).
 
         Returns:
@@ -350,11 +275,14 @@ class TemplateMetric(BaseMetric):
         """
 
         # Example: count the total number of tools used in the conversation:
-        nr_of_tool_invocations = 0
-        for trace in conversation_traces:
-            if trace.to == "TOOL":
-                nr_of_tool_invocations += 1
-
         return Measurement(
-            "NrOfToolInvocations", value=nr_of_tool_invocations, unit=Unit.Count
+            "NrOfToolInvocations",
+            value=len(
+                [
+                    trace
+                    for trace in conversation_traces
+                    if trace.attributes.get("ai.trace.type") == "tool-invocation"
+                ]
+            ),
+            unit=Unit.Count,
         )
