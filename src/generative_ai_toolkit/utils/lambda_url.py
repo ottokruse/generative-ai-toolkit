@@ -47,6 +47,9 @@ class IamAuthInvoker:
     def __init__(
         self, lambda_function_url: str, session: boto3.session.Session | None = None
     ) -> None:
+        # Ensure HTTPS
+        if not lambda_function_url.startswith("https://"):
+            raise Exception("Lambda function URL must start with https://")
         self.lambda_function_url = lambda_function_url
         self.session = session or boto3.session.Session()
 
@@ -75,7 +78,7 @@ class IamAuthInvoker:
             method=method,
         )
 
-        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected
         return urllib.request.urlopen(request, timeout=30)
 
     def _response_body_iterator(self, response: http.client.HTTPResponse, chunk_size=4):
