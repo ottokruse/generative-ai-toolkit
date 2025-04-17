@@ -55,16 +55,22 @@ class _AWSLambdaRunner:
                 new_image = unmarshall(record["dynamodb"].get("NewImage", {}))
                 if "trace_id" not in new_image:
                     continue
-                traces.append(DynamoDbTracer.item_to_trace(new_image))
+                trace = DynamoDbTracer.item_to_trace(new_image)
+                if "ai.conversation.id" not in trace.attributes:
+                    logger.info(
+                        "Skipping evaluation of trace without conversation id",
+                        trace=trace.as_dict(),
+                    )
+                    continue
+                traces.append(trace)
 
-        traces.sort(key=lambda t: t.span_id)
-        traces.sort(key=lambda t: t.trace_id)
-        traces.sort(key=lambda t: t.attributes["conversation_id"])
+        traces.sort(key=lambda t: t.started_at)
+        traces.sort(key=lambda t: t.attributes["ai.conversation.id"])
 
         conversations = [
             list(group)
-            for key, group in groupby(
-                traces, key=lambda t: t.attributes["conversation_id"]
+            for _, group in groupby(
+                traces, key=lambda t: t.attributes["ai.conversation.id"]
             )
         ]
 
