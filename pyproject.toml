@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "generative-ai-toolkit"
-version = "0.5.1"
+version = "0.5.2"
 description = "Toolkit to support developers in building and operating high quality LLM-based applications"
 keywords = ["generative-ai-toolkit", "generative-ai", "gen-ai", "agent", "llm", "testing"]
 readme = "README.md"
