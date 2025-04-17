@@ -329,7 +329,10 @@ def chat_messages_from_traces(
     traces: Iterable[Trace],
     show_all_traces=False,
 ):
-    summaries = get_summaries_for_traces(list(traces))
+    traces = list(traces)
+    if not traces:
+        return None, None, []
+    summaries = get_summaries_for_traces(traces)
     conversations = set(tuple([s.conversation_id, s.auth_context]) for s in summaries)
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")
@@ -351,6 +354,8 @@ def chat_messages_from_conversation_measurements(
     show_measurements=False,
 ):
     summaries = get_summaries_for_conversation_measurements(conv_measurements)
+    if not summaries:
+        return None, None, []
     conversations = set(tuple([s.conversation_id, s.auth_context]) for s in summaries)
     if len(conversations) > 1:
         raise ValueError("More than one conversation id found")

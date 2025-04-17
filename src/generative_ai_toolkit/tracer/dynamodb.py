@@ -9,7 +9,7 @@ from generative_ai_toolkit.tracer.tracer import (
 
 import boto3.session
 import boto3
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Key, Attr
 
 from generative_ai_toolkit.utils.dynamodb import DynamoDbMapper
 
@@ -55,11 +55,11 @@ class DynamoDbTracer(BaseTracer):
         if self.ttl is not None:
             item["expire_at"] = int(trace.started_at.timestamp()) + self.ttl
 
-        # Maintain as top level attribute for querying with GSI:
+        # Maintain as top level attributes for querying with GSI:
         if "ai.conversation.id" in trace.attributes:
-            item["conversation_id"] = (
-                f"{trace.attributes["ai.conversation.id"]}#{trace.attributes.get("ai.auth.context", "-")}"
-            )
+            item["conversation_id"] = trace.attributes["ai.conversation.id"]
+        if "ai.auth.context" in trace.attributes:
+            item["auth_context"] = trace.attributes["ai.auth.context"]
 
         try:
             self.table.put_item(
@@ -77,18 +77,18 @@ class DynamoDbTracer(BaseTracer):
             params["KeyConditionExpression"] = Key("pk").eq(f"TRACE#{trace_id}") & Key(
                 "sk"
             ).begins_with(f"SPAN#{self.identifier or "_"}#")
-        elif (
-            attribute_filter
-            and "ai.conversation.id" in attribute_filter
-            and "ai.auth.context" in attribute_filter
-        ):
+        elif attribute_filter and "ai.conversation.id" in attribute_filter:
             params["KeyConditionExpression"] = Key("conversation_id").eq(
-                f"{attribute_filter["ai.conversation.id"]}#{attribute_filter["ai.auth.context"]}"
+                attribute_filter["ai.conversation.id"]
             ) & Key("sk").begins_with(f"SPAN#{self.identifier or "_"}#")
             params["IndexName"] = self.conversation_id_gsi_name
+            if "ai.auth.context" in attribute_filter:
+                params["FilterExpression"] = Attr("auth_context").eq(
+                    attribute_filter["ai.auth.context"]
+                )
         else:
             raise ValueError(
-                "To use get_traces() you must either provide trace_id, or attribute_filter with keys 'ai.conversation.id' and 'ai.auth.context'"
+                "To use get_traces() you must either provide trace_id, or attribute_filter with key 'ai.conversation.id'"
             )
 
         items = []
@@ -107,6 +107,12 @@ class DynamoDbTracer(BaseTracer):
             if "LastEvaluatedKey" not in response:
                 break
             last_evaluated_key = {"ExclusiveStartKey": response["LastEvaluatedKey"]}
+
+        auth_contexts = set(
+            item["auth_context"] for item in items if "auth_context" in item
+        )
+        if len(auth_contexts) > 1:
+            raise ValueError(f"Multiple auth contexts encountered: {auth_contexts}")
 
         traces: dict[str, Trace] = {}
         for item in response["Items"]:
