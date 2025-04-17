@@ -134,10 +134,7 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
     system_prompt = attributes.pop("ai.llm.request.system", None)
     tool_config = attributes.pop("ai.llm.request.tool.config", None)
     inference_config = attributes.pop("ai.llm.request.inference.config", None)
-    output = attributes.pop("ai.llm.response.output")
-    stop_reason = attributes.pop("ai.llm.response.stop.reason")
-    usage = attributes.pop("ai.llm.response.usage")
-    metrics = attributes.pop("ai.llm.response.metrics")
+    output = attributes.pop("ai.llm.response.output", None)
     res = textwrap.dedent(
         f"""
         **Inference Config**
@@ -154,20 +151,36 @@ def get_markdown_for_llm_invocation(llm_trace: Trace):
 
         **Messages**
         {messages}
-
-        **Output**
-        {output}
-
-        **Stop Reason**
-        {stop_reason}
-
-        **Usage**
-        {usage}
-
-        **Metrics**
-        {metrics}
         """
     )
+    if output:
+        stop_reason = attributes.pop("ai.llm.response.stop.reason", None)
+        usage = attributes.pop("ai.llm.response.usage", None)
+        metrics = attributes.pop("ai.llm.response.metrics", None)
+        res += textwrap.dedent(
+            f"""
+            **Output**
+            {output}
+
+            **Stop Reason**
+            {stop_reason}
+
+            **Usage**
+            {usage}
+
+            **Metrics**
+            {metrics}
+            """
+        )
+
+    error = attributes.pop("ai.llm.response.error", None)
+    if error:
+        res += textwrap.dedent(
+            f"""
+            **Error**
+            {error}
+            """
+        )
     rest_attributes = without(
         attributes,
         ["ai.conversation.id", "ai.trace.type", "ai.auth.context", "peer.service"],
@@ -243,11 +256,15 @@ def chat_messages_from_trace_summary(
     for trace in summary.all_traces:
         metadata: MetadataDict = {
             "title": trace.attributes.get("peer.service", trace.span_name),
-            "status": "done",
             "duration": trace.duration_ms / 1000,
             "id": trace.span_id,
+            "status": "done",
         }
+        if "exception.message" in trace.attributes:
+            metadata.pop("status", None)
         if trace.attributes.get("ai.trace.type") == "tool-invocation":
+            if "ai.tool.error" in trace.attributes:
+                metadata.pop("status", None)
             chat_messages.append(
                 gr.ChatMessage(
                     role="assistant",
@@ -256,6 +273,8 @@ def chat_messages_from_trace_summary(
                 )
             )
         elif trace.attributes.get("ai.trace.type") == "llm-invocation":
+            if "ai.llm.response.error" in trace.attributes:
+                metadata.pop("status", None)
             chat_messages.append(
                 gr.ChatMessage(
                     role="assistant",
