@@ -1359,7 +1359,10 @@ agent.reset()
 mock.reset()
 
 # prepare mock responses, including a tool use:
-mock.add_output(text_output=["Okay, let me check the weather for you."], tool_use_output=[{"name": "weather_tool", "input": {"city": "Amsterdam"}}])
+mock.add_output(
+    text_output=["Okay, let me check the weather for you."],
+    tool_use_output=[{"name": "weather_tool", "input": {"city": "Amsterdam"}}],
+)
 mock.add_output(text_output=["It's nice and sunny in Amsterdam!"])
 
 # run conversation through:
@@ -1368,8 +1371,12 @@ Case(["Hi there! What's the weather like in Amsterdam?"]).run(agent)
 # check agent responses, and tool invocations:
 Expect(agent.traces).user_input.to_include("What's the weather like in Amsterdam?")
 Expect(agent.traces).tool_invocations.to_have_length()
-Expect(agent.traces).tool_invocations.to_include("weather_tool").with_input({"city": "Amsterdam"}).with_output("The weather in Amsterdam is 20 degrees celsius.")
-Expect(agent.traces).agent_text_response.to_equal("Okay, let me check the weather for you.\nIt's nice and sunny in Amsterdam!")
+Expect(agent.traces).tool_invocations.to_include("weather_tool").with_input(
+    {"city": "Amsterdam"}
+).with_output("The weather in Amsterdam is 20 degrees celsius.")
+Expect(agent.traces).agent_text_response.to_equal(
+    "Okay, let me check the weather for you.\nIt's nice and sunny in Amsterdam!"
+)
 ```
 
 #### Mixing mock and real responses
@@ -1382,7 +1389,10 @@ agent.reset()
 mock.reset()
 
 # prepare mock responses, including a tool use:
-mock.add_output(text_output=["Okay, let me check the weather for you."], tool_use_output=[{"name": "weather_tool", "input": {"city": "Amsterdam"}}])
+mock.add_output(
+    text_output=["Okay, let me check the weather for you."],
+    tool_use_output=[{"name": "weather_tool", "input": {"city": "Amsterdam"}}],
+)
 
 # allow the agent to invoke Bedrock once:
 mock.add_real_response()
@@ -1392,10 +1402,13 @@ Case(["Hi there! What's the weather like in Amsterdam?"]).run(agent)
 
 # check agent responses, and tool invocations:
 Expect(agent.traces).tool_invocations.to_have_length()
-Expect(agent.traces).tool_invocations.to_include("weather_tool").with_input({"city": "Amsterdam"}).with_output("The weather in Amsterdam is 20 degrees celsius.")
+Expect(agent.traces).tool_invocations.to_include("weather_tool").with_input(
+    {"city": "Amsterdam"}
+).with_output("The weather in Amsterdam is 20 degrees celsius.")
 Expect(agent.traces).user_input.to_include("What's the weather like in Amsterdam?")
 
-# We have to be a bit more lenient with our assertion now, because the agent's response is not deterministic anymore!:
+# We have to be a bit more lenient with our assertion now,
+# because the agent's response is not deterministic anymore!:
 Expect(agent.traces).agent_text_response.to_include("20")
 ```
 
@@ -1431,9 +1444,9 @@ def my_agent(mock_bedrock_converse):
         Parameters
         ---
         city: str
-        The city
+          The city
         unit: str
-        The unit of degrees (e.g. celsius)
+          The unit of degrees (e.g. celsius)
         """
         return f"The weather in {city} is 20 degrees {unit}."
 
