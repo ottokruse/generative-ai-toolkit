@@ -34,6 +34,8 @@ The following is a reference architecture for a setup that uses the Generative A
 
 <img src="./assets/images/architecture.drawio.png" alt="Architecture" width="1200" />
 
+> Also see our **sample notebook [deploying_on_aws.ipynb](/examples/deploying_on_aws.ipynb)**.
+
 ## Key Terms
 
 To fully utilize the Generative AI Toolkit, it’s essential to understand the following key terms:
