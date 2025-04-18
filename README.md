@@ -1054,6 +1054,8 @@ In your Lambda function definition, if the above file is stored as `index.py`, y
 
 ### 2.9 Deploying and Invoking the `BedrockConverseAgent`
 
+> Also see our **sample notebook [deploying_on_aws.ipynb](/examples/deploying_on_aws.ipynb)**.
+
 A typical deployment of an agent using the Generative AI Toolkit would be, per the [reference architecture](#reference-architecture) mentioned above:
 
 1. An AWS Lambda Function that is exposed as Function URL, so that you can use HTTP to send user input to the agent, and get a streaming response back. The Function URL would e.g. accept POST requests with the user input passed as body: `{"user_input": "What is the capital of France?"}`. If a conversation is to be continued, you could e.g. pass its ID in HTTP header `x-conversation-id`. Correspondingly, when a new conversation is started, its ID would e.g. be passed back in the `x-conversation-id` response header. You can use the `Runner` from Generative AI Toolkit, to implement the Lambda function exactly like this, see below.
