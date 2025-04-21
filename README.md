@@ -1198,11 +1198,13 @@ Setting the auth context ensures that each conversation is bound to that auth co
 
 In the simplest case, you would use the user ID as auth context. For example, if you're using Amazon Cognito, you could use the `sub` claim from the user's access token as auth context.
 
-You can set the auth context on a `BedrockConverseAgent` instance like so (and this is propagated to the conversation history instance your agent uses):
+You can manually set the auth context on a `BedrockConverseAgent` instance like so (and this is propagated to the conversation history instance your agent uses):
 
 ```python
 agent.set_auth_context("<my-user-id>")
 ```
+
+> If you use the `Runner` (see above) you don't have to call `agent.set_auth_context(...)` manually, but rather you should provide an `auth_context_fn`, which is explained in the next paragraph.
 
 > If you have custom needs, for example you want to allow some users, but not all, to share conversations, you likely need to implement a custom conversation history class to support your auth context scheme (e.g. you could subclass `DynamoDbConversationHistory` and customize the logic).
 
@@ -1220,7 +1222,7 @@ flowchart LR
 In this case, configure the `Runner` (from `generative_ai_toolkit.run.agent`) to use the incoming HTTP header `x-user-id` as auth context:
 
 ```python
-from fastapi import Request
+from flask import Request
 from generative_ai_toolkit.run.agent import Runner
 
 def extract_x_user_id_from_request(request: Request):
