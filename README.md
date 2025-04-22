@@ -88,12 +88,6 @@ Other available modifiers are:
 - `[run-agent]`: includes dependencies such as `gunicorn` that allow you to use `generative_ai_toolkit.run.agent.Runner` to expose your agent over HTTP.
 - `[evaluate]`: includes dependencies that allow you to run evaluations against traces.
 
-For type hints in your IDE, it is recommended to also install the boto3 stubs:
-
-```bash
-pip install boto3-stubs[bedrock-runtime,dynamodb]~=1.35.2"
-```
-
 ### 2.2 Agent implementation
 
 The heart of the Generative AI Toolkit are the traces it collects, that are the basis for evaluations (explained below). The toolkit includes a simple agent implementation that is backed by the [Amazon Bedrock Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html) and that is instrumented to collect traces in the right format.
@@ -209,10 +203,36 @@ Calling `agent.reset()` starts a new conversation, with empty conversation histo
 ```python
 print(agent.conversation_id)  # e.g.: "01J5D9ZNK5XKZX472HC81ZYR5P"
 agent.converse("Hi!")
-print(len(agent.messages)) # 1
+print(len(agent.messages)) # 2 (user input + agent response)
 agent.reset()
 print(len(agent.messages)) # 0
 print(agent.conversation_id)  # e.g.: "01J5DQRD864TR3BF314CZK8X5B" (changed)
+```
+
+#### Bedrock Converse Arguments
+
+Upon instantiating the `BedrockConverseAgent` you can pass any arguments that the Bedrock Converse API accepts, and these will be used for all invocations of the Converse API by the agent. You could for example specify usage of [Amazon Bedrock Guardrails](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html):
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+
+agent = BedrockConverseAgent(
+    model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+    system_prompt="your system prompt",
+    max_tokens=500,
+    temperature=0.0,
+    top_p=0.8,
+    stop_sequences=["stop sequence"],
+    guardrail_identifier="guardrail-id",
+    guardrail_version="guardrail-version",
+    guardrail_trace_enabled=True,
+    guardrail_stream_processing_mode="async",
+    additional_model_request_fields={"foo": "bar"},
+    prompt_variables={"foo": {"text": "bar"}},
+    additional_model_response_field_paths=["/path"],
+    request_metadata={"foo": "bar"},
+    performance_config={"latency": "optimized"},
+)
 ```
 
 #### Tools
