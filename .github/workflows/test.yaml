@@ -17,6 +17,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set AWS region (to prevent boto3 errors)
+        run: |
+          echo "AWS_DEFAULT_REGION=us-east-1" >> $GITHUB_ENV
+          echo "AWS_REGION=us-east-1" >> $GITHUB_ENV
+
       - run: pip install '.[all]'
       - run: python -m pip install --upgrade pip
       - run: pip install pytest pytest-cov ruff
