@@ -215,7 +215,7 @@ class BedrockConverseAgent(Agent):
         stop_sequences: list[str] | None = None,
         guardrail_identifier: str | None = None,
         guardrail_version: str | None = None,
-        guardrail_trace_enabled: bool = False,
+        guardrail_trace: Literal["disabled", "enabled", "enabled_full"] | None = None,
         guardrail_stream_processing_mode: Literal["sync", "async"] | None = None,
         conversation_history: (
             ConversationHistory | Callable[..., ConversationHistory] | None
@@ -236,33 +236,48 @@ class BedrockConverseAgent(Agent):
 
         Parameters
         ----------
-        system_prompt : string
-            The system prompt to start the conversation with the agent.
-        model_id : string
-            The model to use for the agent.
-        max_tokens : int, optional
-            The maximum number of tokens to generate in the response, by default None
-            (no limit)
-            Note: this is a hard limit, the actual response may be shorter.
-        temperature : float, optional
-            The temperature to use for the agent, by default None
-            (use the model's default)
-        top_p : float, optional
-            The top_p value to use for the agent, by default None
-            (use the model's default)
-        stop_sequences : list[str], optional
-            The stop sequences to use for the agent, by default None
-            (use the model's default)
-        conversation_history : a ConversationHistory instance, or a Callable that returns a ConversationHistory instance, optional
-            The conversation history to use for the agent, by default InMemoryConversationHistory
-        tracer : a Tracer instance, or a Callable that returns a Tracer instance, optional
-            The tracer to use for the agent, by default InMemoryTracer is used
-        session : boto3.session.Session, optional
-            The AWS session to use for the Bedrock Converse API, by default None (use the default session)
-        tools : Sequence[Callable], optional
-            The tools to register with the agent, by default None
+        model_id : str
+            The model identifier to use for the agent
+        system_prompt : str | None, optional
+            A prompt that provides instructions or context to the model about the task it should perform, or the persona it should adopt during the conversation.
+        max_tokens : int | None, optional
+            The maximum number of tokens to allow in the generated response. The default value is the maximum allowed value for the model that you are using.
+        temperature : float | None, optional
+            The likelihood of the model selecting higher-probability options while generating a response. A lower value makes the model more likely to choose higher-probability options, while a higher value makes the model more likely to choose lower-probability options.
+        top_p : float | None, optional
+            The percentage of most-likely candidates that the model considers for the next token. For example, if you choose a value of 0.8 for topP, the model selects from the top 80% of the probability distribution of tokens that could be next in the sequence.
+        stop_sequences : list[str] | None, optional
+            A list of stop sequences. A stop sequence is a sequence of characters that causes the model to stop generating the response.
+        guardrail_identifier : str | None, optional
+            Identifier for the guardrail to apply
+        guardrail_version : str | None, optional
+            Version of the guardrail to use
+        guardrail_trace : Literal["disabled", "enabled", "enabled_full"], optional
+            The trace behavior for the guardrail.
+        guardrail_stream_processing_mode : Literal["sync", "async"] | None, optional
+            Guardrail processing mode
+        conversation_history : ConversationHistory | Callable[..., ConversationHistory] | None, optional
+            Storage for conversation state, by default InMemoryConversationHistory
+        additional_model_request_fields : Mapping[str, Any] | None, optional
+            Additional fields for model requests
+        prompt_variables : Mapping[str, PromptVariableValuesTypeDef] | None, optional
+            Contains a map of variables in a prompt from Prompt management to objects containing the values to fill in for them when running model invocation. This field is ignored if you don't specify a prompt resource in the modelId field.
+        additional_model_response_field_paths : Sequence[str] | None, optional
+            Additional model parameters field paths to return in the response. Converse and ConverseStream return the requested fields as a JSON Pointer object in the additionalModelResponseFields field. Example: [ "/stop_sequence" ]
+        request_metadata : Mapping[str, str] | None, optional
+            Key-value pairs that you can use to filter invocation logs.
+        performance_config : Literal["standard", "optimized"] | None, optional
+            To use a latency-optimized version of the model, set to optimized
+        tracer : Tracer | Callable[..., Tracer] | None, optional
+            Tracer for monitoring agent behavior, by default InMemoryTracer
+        session : boto3.session.Session | None, optional
+            AWS session for Bedrock API calls, by default None (use default session)
+        tools : Sequence[Callable] | None, optional
+            Tools available to the agent
         max_successive_tool_invocations : int, optional
-            The maximum number of successive tool invocations allowed, by default 10
+            Maximum number of consecutive tool calls, by default 10
+        executor : Executor | None, optional
+            Executor for parallelizing tool invocations. By default, a ThreadPoolExecutor with 8 workers is used.
         """
         self._system_prompt = system_prompt
         self._model_id = model_id
@@ -322,8 +337,9 @@ class BedrockConverseAgent(Agent):
             self.default_guardrail_config = {
                 "guardrailIdentifier": guardrail_identifier,
                 "guardrailVersion": guardrail_version,
-                "trace": "enabled" if guardrail_trace_enabled else "disabled",
             }
+            if guardrail_trace:
+                self.default_guardrail_config["trace"] = guardrail_trace
             if guardrail_stream_processing_mode:
                 self.default_guardrail_config["streamProcessingMode"] = (
                     guardrail_stream_processing_mode
