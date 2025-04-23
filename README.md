@@ -47,7 +47,7 @@ To fully utilize the Generative AI Toolkit, it’s essential to understand the f
 
 - **Metrics**: Metrics are measurements derived from traces that evaluate various aspects of an LLM-based application's performance. Examples include latency, token usage, similarity with expected responses, sentiment, and cost. Metrics can be customized to measure specific behaviors or to enforce validation rules.
 
-- **Cases**: Cases are repeatable tests that simulate conversations with the agent. They consist of a sequence of user inputs and expected agent behaviors or outcomes. Cases are used to validate the agent's responses against defined expectations, ensuring consistent performance across scenarios.
+- **Cases**: Cases are repeatable test inputs that simulate conversations with the agent, e.g. for the purpose of agent evaluation. They consist of a sequence of user inputs and expected agent behaviors or outcomes. Cases are used to validate the agent's responses against defined expectations, ensuring consistent performance across scenarios.
 
 - **Agents**: An agent is an implementation of an LLM-based application that processes user inputs and generates responses. The toolkit provides a simple and extensible agent implementation with built-in support for tracing and tool integration.
 
@@ -64,7 +64,7 @@ To fully utilize the Generative AI Toolkit, it’s essential to understand the f
 2.1 [Installation](#21-installation)  
 2.2 [Agent Implementation](#22-agent-implementation)  
 2.3 [Tracing](#23-tracing)  
-2.4 [Metrics](#24-metrics)  
+2.4 [Evaluation Metrics](#24-evaluation-metrics)  
 2.5 [Repeatable Cases](#25-repeatable-cases)  
 2.6 [Cases with Dynamic Expectations](#26-cases-with-dynamic-expectations)  
 2.7 [Generating Traces: Running Cases in Bulk](#27-generating-traces-running-cases-in-bulk)  
@@ -492,9 +492,9 @@ The AWS X-Ray view is great because it gives developers an easy-to-digest graphi
 
 <img src="./assets/images/x-ray-trace-segments-timeline.png" alt="AWS X-Ray Trace Segments Timeline Screenshot" title="AWS X-Ray Trace Segments Timeline" width="1200"/>
 
-### 2.4 Metrics
+### 2.4 Evaluation Metrics
 
-Metrics allow you to measure how well your agent performs. The Generative AI Toolkit comes with some metrics out of the box, and makes it easy to develop your own metric as well. Metrics work off of traces, and can measure anything that is represented within the traces.
+Metrics allow you to evaluate your LLM-based application (/agent). The Generative AI Toolkit comes with some metrics out of the box, and makes it easy to develop your own metric as well. Metrics work off of traces, and can measure anything that is represented within the traces.
 
 Here is how you can run metrics against traces.
 
