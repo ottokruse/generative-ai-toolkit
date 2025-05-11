@@ -313,7 +313,7 @@ As you can see, tools that you've registered will be invoked automatically by th
 
 #### Other tools
 
-If you don't want to register a Python function as tool, but have a tool with toolspec ready, you can also use it directly, as long as your tool satisfies the `Tool` protocol, i.e. has this shape:
+If you don't want to register a Python function as tool, but have a tool with tool spec ready, you can also use it directly, as long as your tool satisfies the `Tool` protocol, i.e. has this shape:
 
 ```python
 from typing import Any
@@ -329,6 +329,32 @@ class MyTool:
         return "Tool response"
 
 agent.register_tool(MyTool())
+```
+
+It's also possible to provide the tool spec explicitly alongside your plain Python function:
+
+```python
+agent.register_tool(
+    lambda preferred_weather: f"Not {preferred_weather}",
+    tool_spec={
+        "name": "get_weather",
+        "description": "Gets the current weather",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "preferred_weather": {
+                        "type": "string",
+                        "description": "The preferred weather",
+                    },
+                },
+                "required": [
+                    "preferred_weather",
+                ],
+            }
+        },
+    },
+)
 ```
 
 #### Tools override

@@ -1,0 +1,56 @@
+# Copyright 2025 Amazon.com, Inc. and its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from pathlib import Path
+
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.mcp.client import McpClient
+
+
+HERE = Path(__file__).parent
+
+
+def test_mcp_client(mock_bedrock_converse):
+    agent = BedrockConverseAgent(
+        model_id="dummy",
+    )
+
+    mcp_client = McpClient(agent, client_config_path=str(HERE / "mcp.json"))
+    assert mcp_client.config.model_dump() == {
+        "mcpServers": {
+            "WeatherForecasts": {
+                "args": [
+                    "mcp_server_get_weather.py",
+                ],
+                "command": "python3",
+                "env": {
+                    "WEATHER": "Sunny",
+                },
+            },
+        },
+    }
+
+    #####
+    # Unfortunately I have to comment the below tests out for now,
+    # as a suspected bug in the MCP library hangs the test
+    # See details in src/generative_ai_toolkit/mcp/client.py
+    #####
+
+    # def chat_loop(loop, agent):
+    #     agent.converse("What is the weather currently?")
+
+    # mock_bedrock_converse.add_output(tool_use_output=[{"name": "current_weather"}])
+    # mock_bedrock_converse.add_output(text_output=["Sunny"])
+
+    # mcp_client.chat(chat_loop=chat_loop)
