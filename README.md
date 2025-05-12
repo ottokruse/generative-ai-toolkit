@@ -71,7 +71,8 @@ To fully utilize the Generative AI Toolkit, it’s essential to understand the f
 2.8 [CloudWatch Custom Metrics](#28-cloudwatch-custom-metrics)  
 2.9 [Deploying and Invoking the BedrockConverseAgent](#29-deploying-and-invoking-the-bedrockconverseagent)  
 2.10 [Web UI for Conversation Debugging](#210-web-ui-for-conversation-debugging)  
-2.11 [Mocking and Testing](#211-mocking-and-testing)
+2.11 [Mocking and Testing](#211-mocking-and-testing)  
+2.12 [Model Context Protocol (MCP) Client](#212-model-context-protocol-mcp-client)
 
 ### 2.1 Installation
 
