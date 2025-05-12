@@ -77,16 +77,6 @@ class McpClient:
         loop: asyncio.AbstractEventLoop,
         exit_stack: contextlib.AsyncExitStack,
     ):
-        coros = [
-            self.connect_to_mcp_server(
-                exit_stack=exit_stack,
-                command=params.command,
-                args=params.args,
-                env=params.env,
-            )
-            for params in self.config.mcpServers.values()
-        ]
-
         def make_tool_func(session: ClientSession, tool_name: str):
             def func(**kwargs):
                 fut = asyncio.run_coroutine_threadsafe(
@@ -104,7 +94,13 @@ class McpClient:
 
             return func
 
-        for session, tools in await asyncio.gather(*coros):
+        for params in self.config.mcpServers.values():
+            session, tools = await self.connect_to_mcp_server(
+                exit_stack=exit_stack,
+                command=params.command,
+                args=params.args,
+                env=params.env,
+            )
             for tool in tools:
                 tool_spec: ToolSpecificationTypeDef = {
                     "name": tool.name,
@@ -116,7 +112,6 @@ class McpClient:
                         }
                     },
                 }
-
                 self.agent.register_tool(
                     make_tool_func(session, tool.name),
                     tool_spec=tool_spec,
@@ -159,25 +154,14 @@ class McpClient:
                 None, chat_loop or self._default_chat_loop, loop, self.agent
             )
 
-            # Unfortunately I have to do this because the exit stack always hangs on exit,
-            # which blocks the program from exiting (MacOs Sequoia 15.4.1, Python 3.12).
-            # Pretty sure this is a bug in the mcp library, potentially this one:
-            # https://github.com/modelcontextprotocol/python-sdk/issues/547
-            async def exit_soon():
-                await asyncio.sleep(1)
-                os._exit(0)
-
-            loop.create_task(exit_soon())
-            await exit_stack.aclose()
-
-    @staticmethod
-    def _default_chat_loop(loop: asyncio.AbstractEventLoop, agent: Agent):
+    def _default_chat_loop(self, loop: asyncio.AbstractEventLoop, agent: Agent):
         """
         Chat with the MCP client
 
         This is meant as a testing utility. Any serious MCP client would likely customize this implementation.
         """
 
+        print(f"MCP server configuration loaded: {self.config.path}")
         print(
             "\nMCP client ready. Type '/q' to quit. Type /t to list the available tools.\n"
         )
