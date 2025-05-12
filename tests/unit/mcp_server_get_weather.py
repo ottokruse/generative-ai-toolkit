@@ -8,7 +8,7 @@ mcp = FastMCP(
         """
         # Weather Information
 
-        Provides information on current weather, as well as forecasts.
+        Provides information on current weather.
         """
     ),
 )
