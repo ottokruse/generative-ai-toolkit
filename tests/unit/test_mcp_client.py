@@ -14,11 +14,9 @@
 
 from pathlib import Path
 
-
 from generative_ai_toolkit.agent import Agent, BedrockConverseAgent
 from generative_ai_toolkit.mcp.client import McpClient
 from generative_ai_toolkit.test import Expect
-
 
 HERE = Path(__file__).parent
 
