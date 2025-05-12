@@ -1591,13 +1591,14 @@ You can turn your agent into an MCP client easily like so:
 ```python
 from generative_ai_toolkit.agent import BedrockConverseAgent
 from generative_ai_toolkit.mcp.client import McpClient
-from generative_ai_toolkit.tracer import HumanReadableTracer
 
+# Create agent:
 agent = BedrockConverseAgent(
     system_prompt="You are a helpful assistant",
     model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0",
 )
 
+# Turn agent into MCP client:
 mcp_client = McpClient(agent)
 ```
 
