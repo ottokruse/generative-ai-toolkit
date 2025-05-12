@@ -71,6 +71,8 @@ class McpClient:
         self.config = self.load_client_config(
             [client_config_path] if client_config_path else None
         )
+        # Enable the MCP config to have relative paths:
+        os.chdir(os.path.dirname(self.config.path))
 
     async def connect_mcp_servers(
         self,

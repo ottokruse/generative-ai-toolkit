@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from asyncio import AbstractEventLoop
 from pathlib import Path
 
-from generative_ai_toolkit.agent import BedrockConverseAgent
+
+from generative_ai_toolkit.agent import Agent, BedrockConverseAgent
 from generative_ai_toolkit.mcp.client import McpClient
+from generative_ai_toolkit.test import Expect
 
 
 HERE = Path(__file__).parent
@@ -23,7 +26,7 @@ HERE = Path(__file__).parent
 
 def test_mcp_client(mock_bedrock_converse):
     agent = BedrockConverseAgent(
-        model_id="dummy",
+        model_id="dummy", session=mock_bedrock_converse.session()
     )
 
     mcp_client = McpClient(agent, client_config_path=str(HERE / "mcp.json"))
@@ -36,21 +39,19 @@ def test_mcp_client(mock_bedrock_converse):
                 "command": "python3",
                 "env": {
                     "WEATHER": "Sunny",
+                    "FASTMCP_LOG_LEVEL": "ERROR",
                 },
             },
         },
     }
 
-    #####
-    # Unfortunately I have to comment the below tests out for now,
-    # as a suspected bug in the MCP library hangs the test
-    # See details in src/generative_ai_toolkit/mcp/client.py
-    #####
+    def chat_loop(loop: AbstractEventLoop, agent: Agent):
+        agent.converse("What is the weather currently?")
 
-    # def chat_loop(loop, agent):
-    #     agent.converse("What is the weather currently?")
+    mock_bedrock_converse.add_output(tool_use_output=[{"name": "current_weather"}])
+    mock_bedrock_converse.add_output(text_output=["Sunny"])
 
-    # mock_bedrock_converse.add_output(tool_use_output=[{"name": "current_weather"}])
-    # mock_bedrock_converse.add_output(text_output=["Sunny"])
+    mcp_client.chat(chat_loop=chat_loop)
 
-    # mcp_client.chat(chat_loop=chat_loop)
+    Expect(agent.traces).tool_invocations.to_include("current_weather")
+    Expect(agent.traces).agent_text_response.to_equal("Sunny")
