@@ -60,6 +60,7 @@ if TYPE_CHECKING:
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ToolResultBlockUnionTypeDef,
+        ToolSpecificationTypeDef,
     )
 
 
@@ -162,10 +163,15 @@ class Agent(Protocol):
         """
         ...
 
-    def register_tool(self, tool: Tool) -> Tool:
+    def register_tool(
+        self, tool: Callable | Tool, tool_spec: "ToolSpecificationTypeDef | None" = None
+    ) -> Tool:
         """
         Register a tool with the agent.
         The agent can decide to use these tools during conversations.
+        If you provide a Python function (Callable), it will be converted to a `Tool` for you.
+        In order to make that work, it must be documented in a compatible way (as mandated by your Agent implementation).
+        Alternatively, pass in a `tool_spec` explicitly, alongside your Python function.
         """
         ...
 
@@ -500,14 +506,18 @@ class BedrockConverseAgent(Agent):
         """
         self._conversation_history.reset()
 
-    def register_tool(self, tool: Callable | Tool) -> Tool:
+    def register_tool(
+        self, tool: Callable | Tool, tool_spec: "ToolSpecificationTypeDef | None" = None
+    ) -> Tool:
         """
         Register a tool with the agent.
         The agent can decide to use these tools during conversations.
-        If you provide a Python function (Callable), it will be converted to a BedrockConverseTool for you.
+        If you provide a Python function (Callable), it will be converted to a `BedrockConverseTool` for you.
+        In order to make that work, it must be documented in a compatible way (see `BedrockConverseTool`).
+        Alternatively, pass in a `tool_spec` explicitly, alongside your Python function.
         """
-        if callable(tool):
-            tool = BedrockConverseTool(tool)
+        if not isinstance(tool, Tool):
+            tool = BedrockConverseTool(tool, tool_spec=tool_spec)
         self._tools[tool.tool_spec["name"]] = tool
         return tool
 

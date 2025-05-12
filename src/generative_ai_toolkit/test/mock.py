@@ -217,7 +217,8 @@ class MockBedrockConverse:
         reasoning_output: Sequence[str] = (),
     ):
         tool_uses: list[ContentBlockOutputTypeDef] = [
-            {"toolUse": {"toolUseId": uuid4().hex, **t}} for t in tool_use_output
+            {"toolUse": {"toolUseId": uuid4().hex, "input": {}, **t}}
+            for t in tool_use_output
         ]
         texts: list[ContentBlockOutputTypeDef] = [{"text": t} for t in text_output]
         reasoning_outputs: list[ContentBlockOutputTypeDef] = [

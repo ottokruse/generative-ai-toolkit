@@ -19,12 +19,21 @@ import textwrap
 from collections.abc import Callable
 from datetime import date, datetime, time
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Protocol, Union, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Protocol,
+    Union,
+    get_args,
+    get_origin,
+    runtime_checkable,
+)
 
 if TYPE_CHECKING:
     from mypy_boto3_bedrock_runtime.type_defs import ToolSpecificationTypeDef
 
 
+@runtime_checkable
 class Tool(Protocol):
 
     @property
@@ -52,15 +61,21 @@ class ToolResultJsonEncoder(json.JSONEncoder):
 
 class BedrockConverseTool(Tool):
 
-    def __init__(self, func: Callable):
+    def __init__(
+        self, func: Callable, *, tool_spec: "ToolSpecificationTypeDef | None" = None
+    ):
         """
         To create a BedrockConverseTool, you must pass in a plain Python function.
 
-        The function should have a docstring with a description of the function, that will be interpreted by agents.
+        The function must be documented in a compatible way, or you must pass in a `tool_spec` explicitly.
 
-        The function's arguments should all be keyword arguments, and must be type annotated. The arguments must be documented in the docstring.
+        To document your function in a compatible way:
 
-        Example of a valid function:
+        - The function should have a docstring with a description of the function, that will be interpreted by agents.
+
+        - The function's arguments should all be keyword arguments, and must be type annotated. The arguments must be documented in the docstring.
+
+        - Example of a valid function:
 
             def check_weather(lat: float, lon: float) -> str:
                 '''
@@ -75,6 +90,11 @@ class BedrockConverseTool(Tool):
                 '''
                 return "Sunny"
         """
+        self.func = func
+        if tool_spec:
+            self._tool_spec = tool_spec
+            return
+
         if not func.__doc__:
             raise ValueError(
                 "Function must have a docstring in order to be used as tool."
@@ -88,7 +108,6 @@ class BedrockConverseTool(Tool):
         else:
             self.description = docstring
             self.parameter_description = ""
-        self.func = func
         self.parameters, self.required_parameters = self._get_parameters()
 
         # ensure creating tool_spec works
@@ -98,7 +117,7 @@ class BedrockConverseTool(Tool):
             raise ValueError(f"Unable to generate tool_spec for function: {e}") from e
 
     def __repr__(self) -> str:
-        return f"BedrockConverseTool(name='{self.func.__name__}', description='{self.description}', parameters={self.parameters})"
+        return f"BedrockConverseTool(name='{self.func.__name__}', tool_spec={self.tool_spec})"
 
     def invoke(self, **kwargs):
         """

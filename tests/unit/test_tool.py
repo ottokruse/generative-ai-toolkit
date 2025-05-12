@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import pytest
 
-from generative_ai_toolkit.agent import BedrockConverseTool, Tool
+from generative_ai_toolkit.agent import BedrockConverseAgent, BedrockConverseTool, Tool
+from generative_ai_toolkit.test import Expect
 
 
 def test_tool():
@@ -165,3 +167,62 @@ def test_tool_without_docstring():
         ValueError, match="Function must have a docstring in order to be used as tool"
     ):
         BedrockConverseTool(sample_function_without_docstring)
+
+
+def test_explicit_tool_spec_no_parameters(mock_bedrock_converse):
+    agent = BedrockConverseAgent(
+        model_id="dummy", session=mock_bedrock_converse.session()
+    )
+    agent.register_tool(
+        lambda: "Sunny",
+        tool_spec={
+            "name": "get_weather",
+            "description": "Gets the current weather",
+            "inputSchema": {},
+        },
+    )
+
+    assert "get_weather" in agent.tools
+    mock_bedrock_converse.add_output(tool_use_output=[{"name": "get_weather"}])
+    mock_bedrock_converse.add_output(text_output=["Sunny"])
+    agent.converse("What is the weather?")
+    Expect(agent.traces).tool_invocations.to_include("get_weather").with_input({})
+
+
+def test_explicit_tool_spec_with_parameters(mock_bedrock_converse):
+    agent = BedrockConverseAgent(
+        model_id="dummy", session=mock_bedrock_converse.session()
+    )
+    agent.register_tool(
+        lambda preferred_weather: f"Not {preferred_weather}",
+        tool_spec={
+            "name": "get_weather",
+            "description": "Gets the current weather",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "preferred_weather": {
+                            "type": "string",
+                            "description": "The preferred weather",
+                        },
+                    },
+                    "required": [
+                        "preferred_weather",
+                    ],
+                }
+            },
+        },
+    )
+
+    assert "get_weather" in agent.tools
+    mock_bedrock_converse.add_output(
+        tool_use_output=[
+            {"name": "get_weather", "input": {"preferred_weather": "Sunny"}}
+        ]
+    )
+    mock_bedrock_converse.add_output(text_output=["Not sunny"])
+    agent.converse("What is the weather? I'd like it to be sunny.")
+    Expect(agent.traces).tool_invocations.to_include("get_weather").with_input(
+        {"preferred_weather": "Sunny"}
+    )
