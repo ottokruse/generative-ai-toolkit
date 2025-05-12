@@ -1632,6 +1632,10 @@ Note: only local MCP servers (that communicate over `stdio`) are supported curre
 
 To chat with your MCP client, call `chat()`. This will start a REPL chat:
 
+```python
+mcp_client.chat()
+```
+
 ```
 MCP server configuration loaded: mcp.json
 
@@ -1658,12 +1662,23 @@ Assistant: Goodbye!
 You can customize the chat loop by providing your own loop function:
 
 ```python
-def chat_loop(agent: Agent):
+def my_chat_loop(agent: Agent):
     while True:
-        user_input = input("User: ")
+        user_input = input("Awesome user: ")
         if not user_input:
             break
-        for chunk in agent.converse_stream("How's the weather currently?"):
+        for chunk in agent.converse_stream(user_input):
             print(chunk, end="", flush=True)
         print()
+```
+
+And then:
+
+```python
+mcp_client.chat(chat_loop=my_chat_loop)
+```
+
+```
+Awesome user:
+
 ```
