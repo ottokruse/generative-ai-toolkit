@@ -1602,7 +1602,9 @@ agent = BedrockConverseAgent(
 mcp_client = McpClient(agent)
 ```
 
-When you instantiate the `McpClient` it will look for an MCP configuration (`mcp.json`) to load MCP servers. By default it searches for `mcp.json` in the current working directory first, and then in `~/.aws/amazonq/mcp.json` (which is the Amazon Q config path).
+When you instantiate the `McpClient` it will look for an MCP configuration (`mcp.json`) to load MCP servers. All MCP servers from the configuration will be added as tools to the agent automatically.
+
+To load the configuration, `mcp.json` in the current working directory is tried first, and then `~/.aws/amazonq/mcp.json` (which is the Amazon Q config path). If both do not exist, no tools will be added to the agent.
 
 You can also provide the path to `mcp.json` explicitly upon instantiating the McpClient:
 
