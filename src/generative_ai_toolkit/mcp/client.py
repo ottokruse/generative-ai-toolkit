@@ -72,7 +72,9 @@ class McpClient:
             [client_config_path] if client_config_path else None
         )
         # Enable the MCP config to have relative paths:
-        os.chdir(os.path.dirname(self.config.path))
+        config_dir = os.path.dirname(self.config.path)
+        if config_dir:
+            os.chdir(config_dir)
 
     async def connect_mcp_servers(
         self,
@@ -141,22 +143,22 @@ class McpClient:
 
     def chat(
         self,
-        chat_loop: Callable[[asyncio.AbstractEventLoop, Agent], Any] | None = None,
+        chat_loop: Callable[[Agent], Any] | None = None,
     ):
         asyncio.run(self._chat(chat_loop))
 
     async def _chat(
         self,
-        chat_loop: Callable[[asyncio.AbstractEventLoop, Agent], Any] | None = None,
+        chat_loop: Callable[[Agent], Any] | None = None,
     ):
         async with contextlib.AsyncExitStack() as exit_stack:
             loop = asyncio.get_running_loop()
             await self.connect_mcp_servers(loop, exit_stack)
             await loop.run_in_executor(
-                None, chat_loop or self._default_chat_loop, loop, self.agent
+                None, chat_loop or self._default_chat_loop, self.agent
             )
 
-    def _default_chat_loop(self, loop: asyncio.AbstractEventLoop, agent: Agent):
+    def _default_chat_loop(self, agent: Agent):
         """
         Chat with the MCP client
 
@@ -165,7 +167,7 @@ class McpClient:
 
         print(f"MCP server configuration loaded: {self.config.path}")
         print(
-            "\nMCP client ready. Type '/q' to quit. Type /t to list the available tools.\n"
+            "\nMCP client ready. Type /q to quit. Type /t to list the available tools.\n"
         )
         while True:
             user_input = input("You: ").strip()

@@ -1583,3 +1583,87 @@ def test_agent(my_agent, mock_bedrock_converse):
 ```
 
 Note that since we're using Pytest fixtures to provide a new mock and agent for each test case, we don't have to call `reset()` on them.
+
+### 2.12 Model Context Protocol (MCP) Client
+
+You can turn your agent into an MCP client easily like so:
+
+```python
+from generative_ai_toolkit.agent import BedrockConverseAgent
+from generative_ai_toolkit.mcp.client import McpClient
+from generative_ai_toolkit.tracer import HumanReadableTracer
+
+agent = BedrockConverseAgent(
+    system_prompt="You are a helpful assistant",
+    model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+)
+
+mcp_client = McpClient(agent)
+```
+
+When you instantiate the `McpClient` it will look for an MCP configuration (`mcp.json`) to load MCP servers. By default it searches for `mcp.json` in the current working directory first, and then in `~/.aws/amazonq/mcp.json` (which is the Amazon Q config path).
+
+You can also provide the path to `mcp.json` explicitly upon instantiating the McpClient:
+
+```python
+mcp_client = McpClient(agent, client_config_path="/path/to/mcp.json")
+```
+
+The `mcp.json` config follows the same format as Amazon Q MCP config, e.g.:
+
+```json
+{
+  "mcpServers": {
+    "WeatherForecasts": {
+      "command": "python3",
+      "args": ["mcp_server_get_weather.py"],
+      "env": {
+        "WEATHER": "Sunny",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
+    }
+  }
+}
+```
+
+Note: only local MCP servers (that communicate over `stdio`) are supported currently.
+
+#### Chat loop
+
+To chat with your MCP client, call `chat()`. This will start a REPL chat:
+
+```
+MCP server configuration loaded: mcp.json
+
+MCP client ready. Type /q to quit. Type /t to list the available tools.
+
+You: /t
+
+Listing available tools:
+
+  current_weather
+  _______________
+
+    Gets the current weather for the user.
+
+    This tool is already aware of the user's location, so you don't need to provide it.
+
+You: How's the weather?
+Assistant: It's currently sunny and 27 degrees Celsius outside.
+
+You: /q
+Assistant: Goodbye!
+```
+
+You can customize the chat loop by providing your own loop function:
+
+```python
+def chat_loop(agent: Agent):
+    while True:
+        user_input = input("User: ")
+        if not user_input:
+            break
+        for chunk in agent.converse_stream("How's the weather currently?"):
+            print(chunk, end="", flush=True)
+        print()
+```

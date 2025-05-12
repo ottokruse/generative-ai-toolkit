@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from asyncio import AbstractEventLoop
 from pathlib import Path
 
 
@@ -45,7 +44,7 @@ def test_mcp_client(mock_bedrock_converse):
         },
     }
 
-    def chat_loop(loop: AbstractEventLoop, agent: Agent):
+    def chat_loop(agent: Agent):
         agent.converse("What is the weather currently?")
 
     mock_bedrock_converse.add_output(tool_use_output=[{"name": "current_weather"}])
