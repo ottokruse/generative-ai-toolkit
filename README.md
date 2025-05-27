@@ -69,15 +69,15 @@ To fully utilize the Generative AI Toolkit, it’s essential to understand the f
  2.2.4 [Tools](#224-tools)  
  2.2.5 [Multi-agent support](#225-multi-agent-support)  
  2.2.6 [Tracing](#226-tracing)  
-2.4 [Evaluation Metrics](#24-evaluation-metrics)  
-2.5 [Repeatable Cases](#25-repeatable-cases)  
-2.6 [Cases with Dynamic Expectations](#26-cases-with-dynamic-expectations)  
-2.7 [Generating Traces: Running Cases in Bulk](#27-generating-traces-running-cases-in-bulk)  
-2.8 [CloudWatch Custom Metrics](#28-cloudwatch-custom-metrics)  
-2.9 [Deploying and Invoking the BedrockConverseAgent](#29-deploying-and-invoking-the-bedrockconverseagent)  
-2.10 [Web UI for Conversation Debugging](#210-web-ui-for-conversation-debugging)  
-2.11 [Mocking and Testing](#211-mocking-and-testing)  
-2.12 [Model Context Protocol (MCP) Client](#212-model-context-protocol-mcp-client)
+2.3 [Evaluation Metrics](#23-evaluation-metrics)  
+2.4 [Repeatable Cases](#24-repeatable-cases)  
+2.5 [Cases with Dynamic Expectations](#25-cases-with-dynamic-expectations)  
+2.6 [Generating Traces: Running Cases in Bulk](#26-generating-traces-running-cases-in-bulk)  
+2.7 [CloudWatch Custom Metrics](#27-cloudwatch-custom-metrics)  
+2.8 [Deploying and Invoking the BedrockConverseAgent](#28-deploying-and-invoking-the-bedrockconverseagent)  
+2.9 [Web UI for Conversation Debugging](#29-web-ui-for-conversation-debugging)  
+2.10 [Mocking and Testing](#210-mocking-and-testing)  
+2.11 [Model Context Protocol (MCP) Client](#211-model-context-protocol-mcp-client)
 
 ### 2.1 Installation
 
@@ -674,7 +674,7 @@ The AWS X-Ray view is great because it gives developers an easy-to-digest graphi
 
 <img src="./assets/images/x-ray-trace-segments-timeline.png" alt="AWS X-Ray Trace Segments Timeline Screenshot" title="AWS X-Ray Trace Segments Timeline" width="1200"/>
 
-### 2.4 Evaluation Metrics
+### 2.3 Evaluation Metrics
 
 Metrics allow you to evaluate your LLM-based application (/agent). The Generative AI Toolkit comes with some metrics out of the box, and makes it easy to develop your own metric as well. Metrics work off of traces, and can measure anything that is represented within the traces.
 
@@ -900,7 +900,7 @@ class MyMetric(BaseMetric):
         )
 ```
 
-### 2.5 Repeatable Cases
+### 2.4 Repeatable Cases
 
 You can create repeatable cases to run against your LLM application. The process is this:
 
@@ -1093,7 +1093,7 @@ What you can see is that the agent asked the user a question because it needed m
 
 Note that you can still provide `user_inputs` in the case as well: these will be played out first, and once these are exhausted the `user_input_producer` will be invoked for getting subsequent user inputs. This way, you can 'prime' a conversation.
 
-### 2.6 Cases with dynamic expectations
+### 2.5 Cases with dynamic expectations
 
 Cases can also be validated by passing it one or more validator functions. A validator function must be a Python `Callable` that accepts as input the traces of the conversation. Based on these traces the validator function should return `None` or an empty string, if the test passes. If the test fails it should return one or more messages (`str` or `Sequence[str]`).
 
@@ -1140,7 +1140,7 @@ That would e.g. print one failure (if the case has at least one failed validatio
 Measurement(name='ValidationFailed', value=1, unit=<Unit.None_: 'None'>, additional_info={'validation_messages': ['Unexpected message: The current weather is sunny. Let me know if you need any other weather details!']}, dimensions=[], validation_passed=False)
 ```
 
-### 2.7 Generating traces: running cases in bulk
+### 2.6 Generating traces: running cases in bulk
 
 When you have many cases, instead of calling `case.run(agent)` for each case, it's better to run cases in parallel like so:
 
@@ -1192,7 +1192,7 @@ results = GenerativeAIToolkit.eval(
 results.summary() # this prints a table with averages to stdout
 ```
 
-### 2.8 CloudWatch Custom Metrics
+### 2.7 CloudWatch Custom Metrics
 
 Measurements can be logged to CloudWatch Logs in [Embedded Metric Format (EMF)](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format.html) easily, to generate custom metrics within Amazon CloudWatch Metrics:
 
@@ -1265,7 +1265,7 @@ AWSLambdaRunner.configure(metrics=metrics, agent_name="MyAgent")
 
 In your Lambda function definition, if the above file is stored as `index.py`, you would use `index.AWSLambdaRunner` as handler.
 
-### 2.9 Deploying and Invoking the `BedrockConverseAgent`
+### 2.8 Deploying and Invoking the `BedrockConverseAgent`
 
 > Also see our **sample notebook [deploying_on_aws.ipynb](/examples/deploying_on_aws.ipynb)**.
 
@@ -1444,7 +1444,7 @@ Runner.configure(agent=my_agent, auth_context_fn=extract_x_user_id_from_request)
 
 > The `Runner` uses, by default, the AWS IAM `userId` as auth context. The actual value of this `userId` depends on how you've acquired AWS credentials to sign the AWS Lambda Function URL request with. For example, if you've assumed an AWS IAM Role it will simply be the concatenation of your assumed role ID with your chosen session ID. You'll likely want to customize the auth context as explained in this paragraph!
 
-### 2.10 Web UI for Conversation Debugging
+### 2.9 Web UI for Conversation Debugging
 
 The Generative AI Toolkit provides a local, web-based user interface (UI) to help you inspect and debug conversations, view evaluation results, and analyze agent behavior. This UI is particularly useful during development and testing phases, allowing you to quickly identify issues, review traces, and understand how your agent processes user queries and responds.
 
@@ -1480,7 +1480,7 @@ This command runs a local web server (at http://localhost:7860) where you can in
 results.ui.close()
 ```
 
-### 2.11 Mocking and Testing
+### 2.10 Mocking and Testing
 
 As with all software, you'll want to test your agent. You can use above mentioned [Cases](#25-repeatable-cases) for evaluating your agent in an end-to-end testing style. You may also want to create integration tests and unit tests, e.g. to target specific code paths in isolation. For such tests you can use the following tools from the Generative AI Toolkit:
 
@@ -1687,7 +1687,7 @@ def test_agent(my_agent, mock_bedrock_converse):
 
 Note that since we're using Pytest fixtures to provide a new mock and agent for each test case, we don't have to call `reset()` on them.
 
-### 2.12 Model Context Protocol (MCP) Client
+### 2.11 Model Context Protocol (MCP) Client
 
 You can turn your agent into an MCP client easily like so:
 
