@@ -1791,11 +1791,21 @@ Awesome user:
 
 ```
 
-#### MCP Server Verification
+#### MCP Server Tool Verification
 
-You can provide a verification function when instantiating the `McpClient` to validate MCP servers and their tools before they are registered with the agent.
+You can provide a verification function when instantiating the `McpClient` to validate tool descriptions and names from MCP servers, before they are registered with the agent.
 
-Below is an example to show how this works. In the example we use an Amazon Bedrock Guardrail to check that each tool's description matches up with the intent of the user for adding the MCP server.
+This is useful in cases such as:
+
+- You may have added MCP servers that have very different tools than what you were expecting
+- The MCP server might have been extended over time, and now has more tools available than when you originally added the server, which warrants a review
+- The MCP server's tools have poor descriptions; the LLM that backs the MCP client might get confused and could try to use the tools for purposes other than what they actually do
+
+Many MCP client implementations ask the user for explicit approval each time, or the first time, they use a tool. While that works, using a programmatic verification of MCP server tools is useful too, to counter e.g. alert fatigue.
+
+**IMPORTANT**: it's still perfectly possible that MCP server tools do something utterly different from what their description says. That is another problem, which isn't solved by the functionality described here.
+
+Below is an example to show how MCP server tool verification works. In the example we use an Amazon Bedrock Guardrail to check that each tool's description matches up with the intent of the user for adding the MCP server.
 
 The example assumes that the user added their expectation of the MCP server to the MCP server configuration:
 
@@ -1803,7 +1813,7 @@ The example assumes that the user added their expectation of the MCP server to t
 {
   "mcpServers": {
     "WeatherForecasts": {
-      "expectation": "I will use this MCP server to get weather reports",
+      "expectation": "Gets the current weather for the user",
       "command": "python3",
       "args": ["mcp_server_get_weather.py"],
       "env": {
@@ -1820,7 +1830,7 @@ Here's how to use the `verify_mcp_server_tool()` function to test that the MCP s
 ```python
 import boto3
 
-bedrock = boto3.client('bedrock-agent-runtime')
+bedrock = boto3.client("bedrock-runtime")
 
 GUARDRAIL_ID = "your-guardrail-id"
 GUARDRAIL_VERSION = "1"
@@ -1875,6 +1885,12 @@ def verify_mcp_server_tool(*, mcp_server_config, tool_spec):
                     message
                 )
 
+# Create agent as usual:
+agent = BedrockConverseAgent(
+    system_prompt="You are a helpful assistant",
+    model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+)
+
 # Pass the verification function to the McpClient:
 mcp_client = McpClient(
     agent,
@@ -1883,4 +1899,4 @@ mcp_client = McpClient(
 )
 ```
 
-The verification function can be synchronous or asynchronous. If any MCP server tool verification fails, the MCP client will fail to initialize.
+The verification function can be asynchronous or synchronous (in which case it's run threaded). If any MCP server tool verification fails, the MCP client will fail to initialize.
