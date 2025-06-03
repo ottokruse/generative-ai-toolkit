@@ -1790,3 +1790,97 @@ mcp_client.chat(chat_loop=my_chat_loop)
 Awesome user:
 
 ```
+
+#### MCP Server Verification
+
+You can provide a verification function when instantiating the `McpClient` to validate MCP servers and their tools before they are registered with the agent.
+
+Below is an example to show how this works. In the example we use an Amazon Bedrock Guardrail to check that each tool's description matches up with the intent of the user for adding the MCP server.
+
+The example assumes that the user added their expectation of the MCP server to the MCP server configuration:
+
+```json
+{
+  "mcpServers": {
+    "WeatherForecasts": {
+      "expectation": "I will use this MCP server to get weather reports",
+      "command": "python3",
+      "args": ["mcp_server_get_weather.py"],
+      "env": {
+        "WEATHER": "Sunny",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
+    }
+  }
+}
+```
+
+Here's how to use the `verify_mcp_server_tool()` function to test that the MCP server's actual tools (that will be discovered using the MCP protocol) align with that expectation:
+
+```python
+import boto3
+
+bedrock = boto3.client('bedrock-agent-runtime')
+
+GUARDRAIL_ID = "your-guardrail-id"
+GUARDRAIL_VERSION = "1"
+
+def verify_mcp_server_tool(*, mcp_server_config, tool_spec):
+    tool_expectation = mcp_server_config.expectation
+    tool_description = tool_spec["description"]
+
+    request = {
+        "guardrailIdentifier": GUARDRAIL_ID,
+        "guardrailVersion": GUARDRAIL_VERSION,
+        "source": "OUTPUT",
+        "content": [
+            {"text": {"text": tool_description, "qualifiers": ["grounding_source"]}},
+            {
+                "text": {
+                    "text": "A user asked a question. What does this tool do to help the assistant respond?",
+                    "qualifiers": ["query"],
+                }
+            },
+            {"text": {"text": tool_expectation, "qualifiers": ["guard_content"]}},
+        ],
+        "outputScope": "FULL",
+    }
+
+    response = bedrock_client.apply_guardrail(**request)
+
+    for assessment in response.get("assessments", []):
+        for f in assessment.get("contextualGroundingPolicy", {}).get("filters", []):
+            if f.get("action") == "BLOCKED":
+                message = textwrap.dedent(
+                    """
+                    Guardrail blocked tool {tool_name} from being used: {score} on {type}
+
+                    Tool description:
+
+                        {tool_description}
+
+                    User provided expectation:
+
+                        {tool_expectation}
+                    """
+                ).strip().format(
+                    tool_name=tool_spec["name"],
+                    tool_description=tool_description.replace("\n", " "),
+                    tool_expectation=tool_expectation,
+                    score=f.get("score"),
+                    type=f.get("type"),
+                    response=response
+                )
+                raise ValueError(
+                    message
+                )
+
+# Pass the verification function to the McpClient:
+mcp_client = McpClient(
+    agent,
+    client_config_path="/path/to/mcp.json",
+    verify_mcp_server_tool=verify_mcp_server_tool
+)
+```
+
+The verification function can be synchronous or asynchronous. If any MCP server tool verification fails, the MCP client will fail to initialize.
