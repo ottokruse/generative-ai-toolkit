@@ -16,12 +16,12 @@ import asyncio
 import contextlib
 import json
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession, StdioServerParameters, Tool
 from mcp.client.stdio import stdio_client
 from pydantic import BaseModel, Field, PrivateAttr
 
@@ -40,6 +40,7 @@ RESET = "\033[0m"
 
 
 class McpServerConfig(BaseModel):
+    model_config = {"extra": "allow"}
     command: str
     env: dict[str, str] = Field({})
     args: list[str] = Field([])
@@ -62,15 +63,28 @@ class McpClientConfig(BaseModel):
         return instance
 
 
+class VerifyMcpServerToolType(Protocol):
+    def __call__(
+        self,
+        *,
+        mcp_server_config: McpServerConfig,
+        tool_spec: "ToolSpecificationTypeDef",
+    ) -> Any | Awaitable[Any]: ...
+
+
 class McpClient:
 
     def __init__(
-        self, agent: Agent, client_config_path: os.PathLike | str | None = None
+        self,
+        agent: Agent,
+        client_config_path: os.PathLike | str | None = None,
+        verify_mcp_server_tool: VerifyMcpServerToolType | None = None,
     ):
         self.agent = agent
         self.config = self.load_client_config(
             [client_config_path] if client_config_path else None
         )
+        self.verify_mcp_server_tool = verify_mcp_server_tool
         # Enable the MCP config to have relative paths:
         config_dir = os.path.dirname(self.config.path)
         if config_dir:
@@ -79,56 +93,108 @@ class McpClient:
     async def connect_mcp_servers(
         self,
         loop: asyncio.AbstractEventLoop,
-        exit_stack: contextlib.AsyncExitStack,
     ):
-        def make_tool_func(session: ClientSession, tool_name: str):
-            def func(**kwargs):
-                fut = asyncio.run_coroutine_threadsafe(
-                    session.call_tool(
-                        tool_name,
-                        arguments=kwargs,
-                        read_timeout_seconds=timedelta(seconds=30),
-                    ),
-                    loop,
-                )
+        exit_stacks: list[contextlib.AsyncExitStack] = []
 
-                res = fut.result().model_dump()
-                self.agent.tracer.current_trace.add_attribute("ai.mcp.response", res)
-                return res["content"][0]["text"]
+        async def cleanup(exit_stack: contextlib.AsyncExitStack):
+            try:
+                await exit_stack.aclose()
+            except Exception:
+                pass
 
-            return func
+        async def cleanup_all():
+            try:
+                await asyncio.gather(*map(cleanup, exit_stacks))
+            except Exception:
+                pass
 
-        for params in self.config.mcpServers.values():
-            session, tools = await self.connect_to_mcp_server(
-                exit_stack=exit_stack,
-                command=params.command,
-                args=params.args,
-                env=params.env,
+        try:
+            connected_mcp_servers = asyncio.as_completed(
+                self.connect_to_mcp_server(mcp_server_config)
+                for mcp_server_config in self.config.mcpServers.values()
             )
-            for tool in tools:
-                tool_spec: ToolSpecificationTypeDef = {
-                    "name": tool.name,
-                    "description": tool.description or "",
-                    "inputSchema": {
-                        "json": {
-                            "type": "object",
-                            "properties": tool.inputSchema["properties"],
-                        }
-                    },
+
+            tasks = []
+            for connected_mcp_server in connected_mcp_servers:
+                exit_stack, mcp_server_config, sessions, tools = (
+                    await connected_mcp_server
+                )
+                exit_stacks.append(exit_stack)
+                for tool in tools:
+                    tasks.append(
+                        asyncio.create_task(
+                            self.register_mcp_tool(
+                                loop,
+                                mcp_server_config,
+                                sessions,
+                                tool,
+                            )
+                        )
+                    )
+            await asyncio.gather(*tasks)
+
+        except Exception:
+            await cleanup_all()
+            raise
+
+        return cleanup_all
+
+    async def register_mcp_tool(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        mcp_server_config: McpServerConfig,
+        session: ClientSession,
+        tool: Tool,
+    ):
+        tool_spec: ToolSpecificationTypeDef = {
+            "name": tool.name,
+            "description": tool.description or "",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": tool.inputSchema["properties"],
                 }
-                self.agent.register_tool(
-                    make_tool_func(session, tool.name),
+            },
+        }
+        if self.verify_mcp_server_tool:
+            if asyncio.iscoroutinefunction(self.verify_mcp_server_tool):
+                await self.verify_mcp_server_tool(
+                    mcp_server_config=mcp_server_config,
+                    tool_spec=tool_spec,
+                )
+            else:
+                await asyncio.to_thread(
+                    self.verify_mcp_server_tool,
+                    mcp_server_config=mcp_server_config,
                     tool_spec=tool_spec,
                 )
 
-    async def connect_to_mcp_server(
-        self,
-        exit_stack: contextlib.AsyncExitStack,
-        command: str,
-        args: list[str] | None = None,
-        env: dict[str, str] | None = None,
-    ):
-        server_params = StdioServerParameters(command=command, args=args or [], env=env)
+        def func(**kwargs):
+            fut = asyncio.run_coroutine_threadsafe(
+                session.call_tool(
+                    tool.name,
+                    arguments=kwargs,
+                    read_timeout_seconds=timedelta(seconds=30),
+                ),
+                loop,
+            )
+
+            res = fut.result().model_dump()
+            self.agent.tracer.current_trace.add_attribute("ai.mcp.response", res)
+            return res["content"][0]["text"]
+
+        self.agent.register_tool(
+            func,
+            tool_spec=tool_spec,
+        )
+
+    async def connect_to_mcp_server(self, mcp_server_config: McpServerConfig):
+        exit_stack = contextlib.AsyncExitStack()
+        server_params = StdioServerParameters(
+            command=mcp_server_config.command,
+            args=mcp_server_config.args,
+            env=mcp_server_config.env,
+        )
 
         stdio_transport = await exit_stack.enter_async_context(
             stdio_client(server_params)
@@ -139,7 +205,7 @@ class McpClient:
         await session.initialize()
         response = await session.list_tools()
         tools = response.tools
-        return session, tools
+        return exit_stack, mcp_server_config, session, tools
 
     def chat(
         self,
@@ -151,12 +217,14 @@ class McpClient:
         self,
         chat_loop: Callable[[Agent], Any] | None = None,
     ):
-        async with contextlib.AsyncExitStack() as exit_stack:
-            loop = asyncio.get_running_loop()
-            await self.connect_mcp_servers(loop, exit_stack)
+        loop = asyncio.get_running_loop()
+        cleanup = await self.connect_mcp_servers(loop)
+        try:
             await loop.run_in_executor(
                 None, chat_loop or self._default_chat_loop, self.agent
             )
+        finally:
+            await cleanup()
 
     def _default_chat_loop(self, agent: Agent):
         """

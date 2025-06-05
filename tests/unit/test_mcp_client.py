@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -40,6 +42,7 @@ def test_mcp_client(mock_bedrock_converse):
                     "WEATHER": "Sunny",
                     "FASTMCP_LOG_LEVEL": "ERROR",
                 },
+                "expectation": "I will use this tool to check the weather",
             },
         },
     }
@@ -62,3 +65,60 @@ def test_invalid_json(mock_bedrock_converse):
     )
     with pytest.raises(RuntimeError, match="invalid.json"):
         McpClient(agent, client_config_path=str(HERE / "invalid.json"))
+
+
+def test_mcp_server_verification(mock_bedrock_converse):
+    agent = BedrockConverseAgent(
+        model_id="dummy", session=mock_bedrock_converse.session()
+    )
+
+    def pass_verification(*, mcp_server_config, tool_spec):
+        assert mcp_server_config.expectation
+        time.sleep(0.1)
+
+    async def pass_verification_async(*, mcp_server_config, tool_spec):
+        assert mcp_server_config.expectation
+        await asyncio.sleep(0.1)
+
+    def fail_verification(*, mcp_server_config, tool_spec):
+        assert mcp_server_config.expectation
+        time.sleep(0.1)
+        raise RuntimeError(f"MCP server tool verification failed: {mcp_server_config}")
+
+    async def fail_verification_async(*, mcp_server_config, tool_spec):
+        assert mcp_server_config.expectation
+        await asyncio.sleep(0.1)
+        raise RuntimeError(f"MCP server tool verification failed: {mcp_server_config}")
+
+    def chat_loop(agent: Agent):
+        pass
+
+    # Sync - success
+    McpClient(
+        agent,
+        client_config_path=str(HERE / "mcp.json"),
+        verify_mcp_server_tool=pass_verification,
+    ).chat(chat_loop=chat_loop)
+
+    # Async - success
+    McpClient(
+        agent,
+        client_config_path=str(HERE / "mcp.json"),
+        verify_mcp_server_tool=pass_verification_async,
+    ).chat(chat_loop=chat_loop)
+
+    # Sync - fail
+    with pytest.raises(RuntimeError, match="MCP server tool verification failed"):
+        McpClient(
+            agent,
+            client_config_path=str(HERE / "mcp.json"),
+            verify_mcp_server_tool=fail_verification_async,
+        ).chat(chat_loop=chat_loop)
+
+    # Async - fail
+    with pytest.raises(RuntimeError, match="MCP server tool verification failed"):
+        McpClient(
+            agent,
+            client_config_path=str(HERE / "mcp.json"),
+            verify_mcp_server_tool=fail_verification,
+        ).chat(chat_loop=chat_loop)

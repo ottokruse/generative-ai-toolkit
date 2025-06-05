@@ -1790,3 +1790,113 @@ mcp_client.chat(chat_loop=my_chat_loop)
 Awesome user:
 
 ```
+
+#### MCP Server Tool Verification
+
+You can provide a verification function when instantiating the `McpClient` to validate tool descriptions and names from MCP servers, before they are registered with the agent.
+
+This is useful in cases such as:
+
+- You may have added MCP servers that have very different tools than what you were expecting
+- The MCP server might have been extended over time, and now has more tools available than when you originally added the server, which warrants a review
+- The MCP server's tools have poor descriptions; the LLM that backs the MCP client might get confused and could try to use the tools for purposes other than what they actually do
+
+Many MCP client implementations ask the user for explicit approval each time, or the first time, they use a tool. While that works, using a programmatic verification of MCP server tools is useful too, to counter e.g. alert fatigue.
+
+**IMPORTANT**: it's still perfectly possible that MCP server tools do something utterly different from what their description says. That is another problem, which isn't solved by the functionality described here.
+
+Below is an example to show how MCP server tool verification works. In the example we use an Amazon Bedrock Guardrail to check that each tool's description matches up with the intent of the user for adding the MCP server.
+
+The example assumes that the user added their expectation of the MCP server to the MCP server configuration:
+
+```json
+{
+  "mcpServers": {
+    "WeatherForecasts": {
+      "expectation": "Gets the current weather for the user",
+      "command": "python3",
+      "args": ["mcp_server_get_weather.py"],
+      "env": {
+        "WEATHER": "Sunny",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
+    }
+  }
+}
+```
+
+Here's how to use the `verify_mcp_server_tool()` function to test that the MCP server's actual tools (that will be discovered using the MCP protocol) align with that expectation:
+
+```python
+import boto3
+
+bedrock = boto3.client("bedrock-runtime")
+
+GUARDRAIL_ID = "your-guardrail-id"
+GUARDRAIL_VERSION = "1"
+
+def verify_mcp_server_tool(*, mcp_server_config, tool_spec):
+    tool_expectation = mcp_server_config.expectation
+    tool_description = tool_spec["description"]
+
+    request = {
+        "guardrailIdentifier": GUARDRAIL_ID,
+        "guardrailVersion": GUARDRAIL_VERSION,
+        "source": "OUTPUT",
+        "content": [
+            {"text": {"text": tool_description, "qualifiers": ["grounding_source"]}},
+            {
+                "text": {
+                    "text": "A user asked a question. What does this tool do to help the assistant respond?",
+                    "qualifiers": ["query"],
+                }
+            },
+            {"text": {"text": tool_expectation, "qualifiers": ["guard_content"]}},
+        ],
+        "outputScope": "FULL",
+    }
+
+    response = bedrock_client.apply_guardrail(**request)
+
+    for assessment in response.get("assessments", []):
+        for f in assessment.get("contextualGroundingPolicy", {}).get("filters", []):
+            if f.get("action") == "BLOCKED":
+                message = textwrap.dedent(
+                    """
+                    Guardrail blocked tool {tool_name} from being used: {score} on {type}
+
+                    Tool description:
+
+                        {tool_description}
+
+                    User provided expectation:
+
+                        {tool_expectation}
+                    """
+                ).strip().format(
+                    tool_name=tool_spec["name"],
+                    tool_description=tool_description.replace("\n", " "),
+                    tool_expectation=tool_expectation,
+                    score=f.get("score"),
+                    type=f.get("type"),
+                    response=response
+                )
+                raise ValueError(
+                    message
+                )
+
+# Create agent as usual:
+agent = BedrockConverseAgent(
+    system_prompt="You are a helpful assistant",
+    model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+)
+
+# Pass the verification function to the McpClient:
+mcp_client = McpClient(
+    agent,
+    client_config_path="/path/to/mcp.json",
+    verify_mcp_server_tool=verify_mcp_server_tool
+)
+```
+
+The verification function can be asynchronous or synchronous (in which case it's run threaded). If any MCP server tool verification fails, the MCP client will fail to initialize.
