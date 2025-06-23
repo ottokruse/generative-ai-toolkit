@@ -16,9 +16,12 @@ import asyncio
 import contextlib
 import json
 import os
+import signal
+import threading
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
+from threading import Event
 from typing import TYPE_CHECKING, Any, Protocol
 
 from mcp import ClientSession, StdioServerParameters, Tool
@@ -209,62 +212,61 @@ class McpClient:
 
     def chat(
         self,
-        chat_loop: Callable[[Agent], Any] | None = None,
+        chat_fn: Callable[[Agent, Event], Any] | None = None,
+        *,
+        stop_event: Event | None = None,
     ):
-        asyncio.run(self._chat(chat_loop))
+        asyncio.run(self._chat(chat_fn, stop_event=stop_event))
 
     async def _chat(
         self,
-        chat_loop: Callable[[Agent], Any] | None = None,
+        chat_fn: Callable[[Agent, Event], Any] | None = None,
+        *,
+        stop_event: Event | None = None,
     ):
         loop = asyncio.get_running_loop()
         cleanup = await self.connect_mcp_servers(loop)
+        stop_event = stop_event or Event()
+
+        if threading.current_thread() is threading.main_thread():
+
+            def handler(signum, frame):
+                stop_event.set()
+
+            signal.signal(signal.SIGINT, handler)
+
         try:
             await loop.run_in_executor(
-                None, chat_loop or self._default_chat_loop, self.agent
+                None, chat_fn or self._default_chat_fn, self.agent, stop_event
             )
         finally:
             await cleanup()
 
-    def _default_chat_loop(self, agent: Agent):
+    def _default_chat_fn(self, agent: Agent, stop_event: Event):
         """
         Chat with the MCP client
 
         This is meant as a testing utility. Any serious MCP client would likely customize this implementation.
         """
+        from generative_ai_toolkit.ui import chat_ui  # noqa: PLC0415
 
-        print(f"MCP server configuration loaded: {self.config.path}")
-        print(
-            "\nMCP client ready. Type /q to quit. Type /t to list the available tools.\n"
-        )
-        while True:
-            user_input = input("You: ").strip()
-            if not user_input or user_input == "/q":
-                print("Assistant: Goodbye!")
-                break
-
-            if user_input.strip() == "/t":
-                print("\nListing available tools:\n")
-                for tool in agent.tools.values():
-                    print(f"  {tool.tool_spec["name"]}")
-                    print(f"  {"_" * len(tool.tool_spec["name"])}\n")
-                    for line in (
-                        tool.tool_spec.get("description", "").strip().splitlines()
-                    ):
-                        print(f"    {line}")
-                    print()
-                print()
-                continue
-
-            for index, fragment in enumerate(agent.converse_stream(user_input)):
-                if not index:
-                    print("Assistant: ", end="", flush=True)
-                if fragment.strip() == "<thinking>":
-                    print(DIM, end="", flush=True)
-                print(fragment, end="", flush=True)
-                if fragment.strip() == "</thinking>":
-                    print(RESET, end="", flush=True)
+        demo = chat_ui(agent)
+        demo.launch(prevent_thread_lock=True, quiet=True, inbrowser=True)
+        print(f"\nMCP server configuration loaded: {self.config.path or 'None'}")
+        print("\nRegistered tools:\n")
+        for tool in agent.tools.values():
+            print(f"  {tool.tool_spec["name"]}")
+            print(f"  {"_" * len(tool.tool_spec["name"])}\n")
+            for line in tool.tool_spec.get("description", "").strip().splitlines():
+                print(f"    {line}")
             print()
+        print()
+        print(f"Running MCP client at {demo.local_url}\n")
+        print("Press CTRL-C to quit.\n")
+
+        stop_event.wait()
+
+        print("\n\nGoodbye!")
 
     @staticmethod
     def load_client_config(
