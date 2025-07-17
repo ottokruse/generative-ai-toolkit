@@ -317,6 +317,55 @@ print(response) # Okay, let me get the current weather report for Amsterdam usin
 
 As you can see, tools that you've registered will be invoked automatically by the agent. The output from `converse` is always just a string with the agent's response to the user.
 
+##### Tool Development with Pydantic
+
+You can use Pydantic models to define your tool's interface. This approach provides several key benefits:
+
+1. **Clear Interface Documentation**: Input/output schemas are automatically generated from your models. The LLM "reads" both the model's docstring and the `description` attributes of Pydantic Field objects to understand how to use the tool correctly. This natural language documentation helps the LLM make informed decisions about parameter values.
+2. **Error Handling with Self-Correction**: Built-in error handling and validation messages are fed back to the LLM, allowing it to understand what went wrong and self-correct its tool usage. For example, if the LLM provides an invalid value for a parameter, Pydantic's detailed error message helps the LLM understand why it was invalid and how to fix it in subsequent attempts.
+3. **Strong Type Validation**: Pydantic enforces strict type checking and validation at runtime
+
+You can find a complete example in `examples/pydantic_tools/` that demonstrates this approach. The example implements a weather alerts tool with proper input validation, error handling, and response structuring:
+
+```python
+from pydantic import BaseModel, Field
+
+class WeatherAlertRequest(BaseModel):
+    """
+    Request parameters for the weather alerts tool.
+    """
+    area: Optional[str] = Field(
+        default=None,
+        description="State code (e.g., 'CA', 'TX') or zone/county code to filter alerts by area."
+    )
+    severity: Optional[str] = Field(
+        default=None,
+        description="Filter by severity level: 'Extreme', 'Severe', 'Moderate', 'Minor', or 'Unknown'.",
+        pattern="^(Extreme|Severe|Moderate|Minor|Unknown)$"
+    )
+
+class WeatherAlertsTool:
+    @property
+    def tool_spec(self) -> Dict[str, Any]:
+        """Tool specification is automatically generated from the Pydantic model."""
+        schema = WeatherAlertRequest.model_json_schema()
+        return {
+            "name": "get_weather_alerts",
+            "description": WeatherAlertRequest.__doc__,
+            "inputSchema": {"json": schema}
+        }
+
+    def invoke(self, **kwargs) -> Dict[str, Any]:
+        """
+        Invoke the weather alerts tool with validated parameters.
+        """
+        try:
+            request = WeatherAlertRequest(**kwargs)  # Validation happens here
+            return self._get_weather_alerts(request)
+        except ValidationError as e:
+            return {"error": str(e)}
+```
+
 ##### Other tools
 
 If you don't want to register a Python function as tool, but have a tool with tool spec ready, you can also use it directly, as long as your tool satisfies the `Tool` protocol, i.e. has this shape:
