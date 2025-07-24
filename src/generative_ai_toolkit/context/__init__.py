@@ -20,7 +20,7 @@ import contextvars
 from threading import Event
 from typing import Any, NotRequired, TypedDict
 
-from generative_ai_toolkit.tracer import Tracer
+from generative_ai_toolkit.tracer import NoopTracer, Tracer
 
 
 class AuthContext(TypedDict):
@@ -80,3 +80,43 @@ class AgentContext:
         ctx = contextvars.copy_context()
         ctx.run(lambda: self._current.set(self))
         return ctx
+
+    @classmethod
+    def set_test_context(
+        cls,
+        *,
+        conversation_id: str = "test",
+        auth_context: AuthContext | None = None,
+        tracer: Tracer | None = None,
+        stop_event: Event | None = None,
+    ) -> "AgentContext":
+        """
+        Helper function to set up a test AgentContext for use in test fixtures.
+
+        Parameters
+        ----------
+        conversation_id : str, optional
+            The conversation ID for testing, by default "test"
+        auth_context : AuthContext, optional
+            The AuthContext for testing, by default AuthContext(principal_id="test")
+        tracer : Tracer, optional
+            The tracer to use, by default NoopTracer()
+        stop_event : Event, optional
+            The stop event to use, by default None
+
+        Returns
+        -------
+        AgentContext
+            The configured test context that has been set as current
+        """
+
+        context = cls(
+            conversation_id=conversation_id,
+            tracer=tracer or NoopTracer(),
+            auth_context=(
+                auth_context.copy() if auth_context else AuthContext(principal_id="test")
+            ),
+            stop_event=stop_event,
+        )
+        cls._current.set(context)
+        return context
