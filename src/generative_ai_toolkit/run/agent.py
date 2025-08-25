@@ -13,18 +13,26 @@
 # limitations under the License.
 
 import json
-from collections.abc import Callable, Iterable
+import threading
+from collections.abc import Callable, Iterable, Sequence
 from contextvars import ContextVar
 from typing import (
+    Any,
+    Literal,
     Protocol,
     TypedDict,
     Unpack,
+    cast,
+    overload,
 )
 
 from flask import Flask, Request, Response, request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from generative_ai_toolkit.agent.tool import Tool
 from generative_ai_toolkit.context import AuthContext
+from generative_ai_toolkit.tracer.trace import Trace
+from generative_ai_toolkit.utils.json import DefaultJsonEncoder
 from generative_ai_toolkit.utils.logging import logger
 
 
@@ -34,21 +42,76 @@ class Runnable(Protocol):
 
     def set_conversation_id(self, conversation_id: str) -> None: ...
 
-    def set_auth_context(
-        self, **auth_context: Unpack[AuthContext]
-    ) -> None: ...
+    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None: ...
 
     def reset(self) -> None: ...
 
-    def converse_stream(self, user_input: str) -> Iterable[str]: ...
+    @overload
+    def converse_stream(
+        self,
+        user_input: str,
+        stream: Literal["text"] = "text",
+        tools: Sequence[Tool] | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> Iterable[str]:
+        """
+        Start or continue a conversation with the agent.
+
+        Response fragments (text chunks) are yielded as they are produced.
+
+        The caller must consume this iterable fully for the agent to progress.
+
+        The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
+
+        If you provide tools, that list of tools supersedes any tools that have been registered with the agent (but otherwise does not force their use).
+
+        The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
+        """
+        ...
+
+    @overload
+    def converse_stream(
+        self,
+        user_input: str,
+        stream: Literal["traces"],
+        tools: Sequence[Tool] | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> Iterable[Trace]:
+        """
+        Start or continue a conversation with the agent.
+
+        Traces are yielded as they are produced by the agent and its tools.
+
+        The caller must consume this iterable fully for the agent to progress.
+
+        The iterable ends when the agent requests new user input, and then you should call this function again with the new user input.
+
+        If you provide tools, that list of tools supersedes any tools that have been registered with the agent (but otherwise does not force their use).
+
+        The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
+        """
+        ...
+
+
+class Body(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    user_input: str = Field(
+        description="The input from the user to the agent", min_length=1
+    )
+    stream: Literal["text", "traces"] = Field(
+        default="text", description="Response stream type"
+    )
 
 
 AuthContextFn = Callable[[Request], AuthContext]
+
+TraceMapFn = Callable[[Request, Body, Trace], Any]
 
 
 class RunnerConfig(TypedDict, total=False):
     agent: Runnable | Callable[[], Runnable]
     auth_context_fn: AuthContextFn
+    trace_map_fn: TraceMapFn
 
 
 def iam_auth_context_fn(request: Request) -> AuthContext:
@@ -63,11 +126,13 @@ def iam_auth_context_fn(request: Request) -> AuthContext:
 class _Runner:
     _agent: Runnable | Callable[[], Runnable] | None
     _auth_context_fn: AuthContextFn
+    _trace_map_fn: TraceMapFn
     _app: Flask
 
     def __init__(self) -> None:
         self._agent = None
         self._auth_context_fn = iam_auth_context_fn
+        self._trace_map_fn = lambda request, body, trace: trace
         self._context = ContextVar[Runnable | None]("agent", default=None)
 
     @property
@@ -88,6 +153,10 @@ class _Runner:
     def auth_context_fn(self) -> AuthContextFn:
         return self._auth_context_fn
 
+    @property
+    def trace_map_fn(self) -> TraceMapFn:
+        return self._trace_map_fn
+
     def configure(
         self,
         **kwargs: Unpack[RunnerConfig],
@@ -98,6 +167,10 @@ class _Runner:
             if not callable(kwargs["auth_context_fn"]):
                 raise ValueError("auth_context_fn must be callable")
             self._auth_context_fn = kwargs["auth_context_fn"]
+        if "trace_map_fn" in kwargs:
+            if not callable(kwargs["trace_map_fn"]):
+                raise ValueError("trace_map_fn must be callable")
+            self._trace_map_fn = kwargs["trace_map_fn"]
 
     @property
     def app(self):
@@ -106,11 +179,6 @@ class _Runner:
         @app.get("/")
         def health():
             return "Up and running! To chat with the agent, use HTTP POST"
-
-        class Body(BaseModel):
-            user_input: str = Field(
-                description="The input from the user to the agent", min_length=1
-            )
 
         @app.post("/")
         def index():
@@ -135,26 +203,56 @@ class _Runner:
             else:
                 agent.reset()
 
-            # Explicitly consume the first chunk so any obvious errors bubble up
-            # before we return status 200 below
-            chunks = agent.converse_stream(body.user_input)
+            stop_event = threading.Event()
+
+            # Explicitly consume the first chunk so any obvious errors (e.g. insufficient IAM permissions)
+            # bubble up before we return status 200 below
+            chunks = agent.converse_stream(
+                body.user_input, stream=body.stream, stop_event=stop_event
+            )
             first_chunk = next(iter(chunks))
 
-            def chunked_response():
+            def _chunks_or_traces():
                 try:
                     yield first_chunk
                     yield from chunks
+                finally:
+                    # In case the iterator isn't fully consumed and the caller breaks off the HTTP request:
+                    stop_event.set()
+
+            def chunked_reponse():
+                try:
+                    if body.stream == "traces":
+                        for trace in _chunks_or_traces():
+                            mapped_trace = self.trace_map_fn(
+                                request, body, cast(Trace, trace)
+                            )
+                            if mapped_trace is not None:
+                                yield json.dumps(
+                                    mapped_trace,
+                                    cls=DefaultJsonEncoder,
+                                ) + "\n"
+                    else:
+                        for chunk in _chunks_or_traces():
+                            yield cast(str, chunk)
                 except Exception:
                     logger.exception()
-                    yield "Internal Server Error\n"
+                    yield json.dumps(
+                        {"error": {"message": "An internal server error occurred"}}
+                    )
 
             return Response(
-                chunked_response(),
+                chunked_reponse(),
                 status=200,
-                content_type="text/plain; charset=utf-8",
+                content_type=(
+                    "text/plain; charset=utf-8"
+                    if body.stream == "text"
+                    else "application/x-ndjson; charset=utf-8"
+                ),
                 headers={
                     "x-conversation-id": agent.conversation_id,
                     "transfer-encoding": "chunked",
+                    "Cache-Control": "no-cache",
                 },
             )
 

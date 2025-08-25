@@ -218,6 +218,9 @@ class Trace:
             f")"
         )
 
+    def __json__(self) -> TraceDict:
+        return self.as_dict()
+
     def as_dict(self) -> TraceDict:
         return {
             "span_name": self.span_name,

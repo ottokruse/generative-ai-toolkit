@@ -37,7 +37,7 @@ def test_dynamodb_serialization():
         trace_id=parent_trace.trace_id
     )
 
-    # Check each attribute of parent seperately:
+    # Check each attribute of parent separately:
     assert parent_deserialized.trace_id == parent_trace.trace_id
     assert parent_deserialized.span_id == parent_trace.span_id
     assert parent_deserialized.span_name == parent_trace.span_name
@@ -57,7 +57,7 @@ def test_dynamodb_serialization():
             assert v == parent_trace.attributes[k]
     assert child_deserialized.as_dict() == child_trace.as_dict()
 
-    error_trace = Trace("bound")
+    error_trace = Trace("bound") # Defined here to prevent type checker issue
     with pytest.raises(ValueError):
         with tracer.trace("test-exception") as error_trace:
             raise ValueError("Oooops")
