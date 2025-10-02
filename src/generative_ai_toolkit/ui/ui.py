@@ -14,7 +14,7 @@
 
 import functools
 import textwrap
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from threading import Event
 from typing import Any, Literal
 
@@ -27,6 +27,7 @@ from generative_ai_toolkit.ui.conversation_list import (
     ConversationList,
     ConversationPage,
 )
+from generative_ai_toolkit.ui.conversation_list.conversation_list import Conversation
 from generative_ai_toolkit.ui.lib import (
     chat_messages_from_conversation_measurements,
     chat_messages_from_traces,
@@ -38,10 +39,11 @@ from generative_ai_toolkit.ui.lib import (
 def chat_ui(
     agent: Agent | Callable[[], Agent],
     *,
-    show_traces_drop_down=True,
+    show_top_bar=True,
     show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
     max_concurrent_conversations: int | None = None,
     conversation_list: ConversationList | None = None,
+    title="Generative AI Toolkit",
 ):
 
     @functools.lru_cache(maxsize=max_concurrent_conversations)
@@ -52,14 +54,30 @@ def chat_ui(
 
     ensure_running_event_loop()
 
-    def user_submit(user_input: str):
+    def user_submit(user_input: str, messages: list[gr.ChatMessage]):
         return (
             gr.update(
                 value="", interactive=False, submit_btn=False, stop_btn=True
             ),  # clear textbox
             user_input,
             Event(),
+            messages
+            + [
+                gr.ChatMessage(
+                    role="user", content=user_input, metadata={"title": "User"}
+                )
+            ],
         )
+
+    def describe_conversation(
+        conversation_id: str, last_user_input: str, messages: list[gr.ChatMessage]
+    ):
+        if not conversation_list:
+            return gr.update()
+        conversation = conversation_list.add_conversation(
+            conversation_id, [{"role": "user", "content": [{"text": last_user_input}]}]
+        )
+        return conversation.description
 
     def user_stop(stop_event: Event | None):
         if stop_event:
@@ -89,7 +107,7 @@ def chat_ui(
         show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
     ):
         *_, messages = chat_messages_from_traces(traces, show_traces=show_traces)
-        return messages
+        return messages, gr.update(interactive=bool(messages))
 
     def reset_agent(request: gr.Request):
         current_agent_instance = ensure_agent_instance(request.session_hash)
@@ -101,12 +119,20 @@ def chat_ui(
             [],
             current_agent_instance.conversation_id,
             current_agent_instance.conversation_id,
+            "",
         )
 
-    def get_agent_traces(request: gr.Request, conversation_id: str):
+    def load_conversation_id(
+        request: gr.Request, conversation_id: str
+    ) -> tuple[Sequence[Trace], str]:
         current_agent_instance = ensure_agent_instance(request.session_hash)
         current_agent_instance.set_conversation_id(conversation_id)
-        return current_agent_instance.traces
+        conversation: Conversation | None = None
+        if conversation_list:
+            conversation = conversation_list.get_conversation(conversation_id)
+        return current_agent_instance.traces, (
+            conversation.description if conversation else ""
+        )
 
     def load_page(
         current_page_token: Any,
@@ -166,10 +192,22 @@ def chat_ui(
         """
     )
 
+    js_set_conversation_description_as_title = textwrap.dedent(
+        """
+        function (conversationDescription) {{
+            if (conversationDescription) {{
+                document.title = conversationDescription;
+            }} else {{
+                document.title = '{title}';
+            }}
+        }}
+        """
+    ).format(title=title)
+
     with gr.Blocks(
         theme="origin",
         fill_width=True,
-        title="Generative AI Toolkit",
+        title=title,
         css="""
             .centered-row {
               align-items: center !important;
@@ -191,15 +229,21 @@ def chat_ui(
 
         # Use Textbox instead of state so JS can see the value:
         conversation_id = gr.Textbox(visible=False)
+        conversation_description = gr.Textbox(visible=False)
 
         with gr.Column(visible=True) as chat_view:
-            with gr.Row(visible=show_traces_drop_down):
+            with gr.Row(visible=show_top_bar):
                 conversation_list_btn = gr.Button(
                     "Conversation List",
                     scale=0,
                     min_width=250,
                     visible=conversation_list is not None,
                     interactive=False,
+                )
+                new_chat_btn = gr.Button("New Chat ↗️", scale=0, interactive=False)
+                new_chat_btn.click(
+                    fn=None,
+                    js="() => { window.open('/?conversation-id=', '_blank') }",
                 )
                 gr.Markdown("")  # functions as spacer
                 trace_visibility_drop_down = gr.Dropdown(
@@ -218,7 +262,7 @@ def chat_ui(
 
             chatbot = gr.Chatbot(
                 type="messages",
-                height="75vh" if show_traces_drop_down else "80vh",
+                height="75vh" if show_top_bar else "80vh",
             )
 
             msg = gr.Textbox(
@@ -421,12 +465,18 @@ def chat_ui(
         )
 
         conversation_id.change(
-            get_agent_traces,
+            load_conversation_id,
             inputs=[conversation_id],
-            outputs=[traces_state],
+            outputs=[traces_state, conversation_description],
             queue=True,
             show_progress="full",
             show_progress_on=[msg, chatbot],
+        )
+
+        conversation_description.change(
+            None,
+            inputs=[conversation_description],
+            js=js_set_conversation_description_as_title,
         )
 
         conversation_list_btn.click(
@@ -443,7 +493,7 @@ def chat_ui(
         show_traces_state.change(
             traces_state_change,
             inputs=[traces_state, show_traces_state],
-            outputs=[chatbot],
+            outputs=[chatbot, new_chat_btn],
             show_progress="hidden",
             show_progress_on=[],
         )
@@ -454,32 +504,52 @@ def chat_ui(
             outputs=[conversation_list_btn],
         )
 
-        def update_conversation_list(request: gr.Request) -> ConversationPage:
+        def get_conversation_list(
+            request: gr.Request,
+        ) -> ConversationPage:
             if not conversation_list:
                 return ConversationPage()
             current_agent_instance = ensure_agent_instance(request.session_hash)
             conversation_list.set_auth_context(**current_agent_instance.auth_context)
-            conversation_list.add_conversation(
-                current_agent_instance.conversation_id,
-                current_agent_instance.conversation_history.messages,
-            )
             return conversation_list.get_conversations()
 
-        msg.submit(
+        msg_submitted = msg.submit(
             user_submit,
-            inputs=[msg],
-            outputs=[msg, last_user_input, stop_event],
-        ).then(
+            inputs=[msg, chatbot],
+            outputs=[
+                msg,
+                last_user_input,
+                stop_event,
+                chatbot,
+            ],
+        )
+
+        msg_submitted.then(
+            describe_conversation,
+            inputs=[conversation_id, last_user_input, chatbot],
+            outputs=[conversation_description],
+            queue=True,
+        )
+
+        msg_submitted.then(
             assistant_stream,
             inputs=[traces_state, last_user_input, stop_event],
             outputs=[traces_state],
             show_progress="full",
             show_progress_on=[chatbot],
+            queue=True,
         ).then(
             lambda: gr.update(interactive=True, submit_btn=True, stop_btn=False),
             outputs=[msg],
         ).then(
-            update_conversation_list, outputs=[conversation_list_current_page]
+            describe_conversation,
+            inputs=[conversation_id, last_user_input, chatbot],
+            outputs=[conversation_description],
+            queue=True,
+        ).then(
+            get_conversation_list,
+            outputs=[conversation_list_current_page],
+            queue=True,
         )
 
         msg.stop(user_stop, inputs=[stop_event], outputs=[msg])
@@ -487,7 +557,7 @@ def chat_ui(
         traces_state.change(
             traces_state_change,
             inputs=[traces_state, show_traces_state],
-            outputs=[chatbot],
+            outputs=[chatbot, new_chat_btn],
             show_progress="hidden",
             show_progress_on=[],
             queue=True,
@@ -495,7 +565,13 @@ def chat_ui(
 
         chatbot.clear(
             reset_agent,
-            outputs=[chatbot, traces_state, conversation_id, last_conversation_id],
+            outputs=[
+                chatbot,
+                traces_state,
+                conversation_id,
+                last_conversation_id,
+                conversation_description,
+            ],
         ).then(
             None,
             inputs=[conversation_id],
@@ -512,9 +588,10 @@ def chat_ui(
             if "conversation-id" in request.query_params and isinstance(
                 request.query_params["conversation-id"], str
             ):
-                current_agent_instance.set_conversation_id(
-                    request.query_params["conversation-id"]
-                )
+                if request.query_params["conversation-id"]:
+                    current_agent_instance.set_conversation_id(
+                        request.query_params["conversation-id"]
+                    )
             elif last_conversation_id:
                 current_agent_instance.set_conversation_id(last_conversation_id)
             return (

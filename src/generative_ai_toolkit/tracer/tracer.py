@@ -14,9 +14,11 @@
 
 import inspect
 import os
+import shutil
 import sqlite3
 import sys
 import threading
+import time
 import traceback
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
@@ -366,9 +368,55 @@ class StructuredLogsTracer(StreamTracer):
 
 class HumanReadableTracer(StreamTracer):
 
+    def __init__(
+        self,
+        *,
+        max_length: int | None = None,
+        max_lines: int | None = None,
+        snapshot_trace_types: tuple[str] = ("llm-invocation",),
+        stream: TextIO | None = None,
+        trace_context_provider: TraceContextProvider | None = None,
+        print_snapshot_every: float | None = None,
+    ):
+        super().__init__(
+            stream=stream,
+            trace_context_provider=trace_context_provider,
+        )
+        self.snapshot_enabled = bool(snapshot_trace_types)
+        self.max_length = (
+            max_length
+            if max_length is not None
+            else (max(shutil.get_terminal_size().columns - 40, 80))
+        )
+        self.max_lines = max_lines if max_lines is not None else 4
+        self.snapshot_trace_types = snapshot_trace_types
+        self.last_snapshot_printed = 0.0
+        self.print_snapshot_every = (
+            print_snapshot_every if print_snapshot_every is not None else 0.3
+        )
+
     def persist(self, trace: Trace):
+        human_readable_trace = trace.as_human_readable(
+            max_length=self.max_length, max_lines=self.max_lines
+        )
         with self.lock:
-            print(trace.as_human_readable(), file=self._stream)
+            print(human_readable_trace, file=self._stream)
+
+    def persist_snapshot(self, trace: Trace):
+        if (
+            not self.snapshot_enabled
+            or "ai.trace.type" not in trace.attributes
+            or trace.attributes["ai.trace.type"] not in self.snapshot_trace_types
+        ):
+            return
+        now = time.monotonic()
+        with self.lock:
+            if (now - self.last_snapshot_printed) > self.print_snapshot_every:
+                human_readable_trace = trace.as_human_readable(
+                    max_length=self.max_length, max_lines=self.max_lines
+                )
+                print(human_readable_trace, file=self._stream)
+                self.last_snapshot_printed = now
 
 
 class InMemoryTracer(BaseTracer):
