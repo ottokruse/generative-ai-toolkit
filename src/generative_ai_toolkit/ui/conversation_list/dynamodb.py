@@ -107,6 +107,23 @@ class DynamoDbConversationList(ConversationList):
             },
         )
 
+    def get_conversation(self, conversation_id: str) -> Conversation | None:
+        conversation = self.table.get_item(
+            Key={
+                "pk": f"LIST#{self._auth_context["principal_id"] or "_"}",
+                "sk": f"CONV#{conversation_id}#",
+            }
+        ).get("Item")
+
+        if not conversation:
+            return None
+
+        return Conversation(
+            conversation_id=str(conversation["conversation_id"]),
+            description=str(conversation["description"]),
+            updated_at=datetime.datetime.fromisoformat(str(conversation["updated_at"])),
+        )
+
     def get_conversations(self, next_page_token: Any | None = None) -> ConversationPage:
         params = {
             "IndexName": self.updated_at_gsi_name,

@@ -76,6 +76,7 @@ class Trace:
     parent_span: "Trace | None"
     started_at: datetime
     ended_at: datetime | None
+    cloned_at: datetime | None
     _attributes: dict[str, Any]
     _inheritable_attributes: dict[str, Any]
     span_status: Literal["UNSET", "OK", "ERROR"]
@@ -125,6 +126,7 @@ class Trace:
         self._snapshot_handler = snapshot_handler
         self._deepcopy_lock = threading.Lock()
         self._attributes_lock = threading.Lock()
+        self.cloned_at = None
 
     def clone(self):
         """
@@ -162,6 +164,7 @@ class Trace:
             ),
             scope=self.scope,
         )
+        copied.cloned_at = datetime.now(UTC)
         return copied
 
     def emit_snapshot(self):
@@ -265,19 +268,17 @@ class Trace:
         color_reset=RESET,
         color_magenta=MAGENTA,
         color_cyan=CYAN,
-        color_dim_gray=DIM_GRAY,
     ) -> str:
 
-        # Snapshots are printed only in dim gray:
+        # Snapshots are printed only in gray:
         if self.ended_at is None:
-            color_white = color_dim_gray
-            color_blue = color_dim_gray
-            color_green = color_dim_gray
-            color_yellow = color_dim_gray
-            color_red = color_dim_gray
-            color_gray = color_dim_gray
-            color_magenta = color_dim_gray
-            color_cyan = color_dim_gray
+            color_white = color_gray
+            color_blue = color_gray
+            color_green = color_gray
+            color_yellow = color_gray
+            color_red = color_gray
+            color_magenta = color_gray
+            color_cyan = color_gray
 
         def truncate(
             text: str, max_length=max_length, max_lines=1, indent_subsequent_lines=0
@@ -343,6 +344,17 @@ class Trace:
         start_time = self.started_at.isoformat(timespec="milliseconds").replace(
             "+00:00", "Z"
         )
+        end_time = (
+            self.ended_at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            if self.ended_at
+            else None
+        )
+        duration_time = f"[{self.duration_ms / 1000:.1f}s]" if self.ended_at else ""
+        cloned_at = (
+            self.cloned_at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            if self.cloned_at
+            else start_time
+        )
 
         agent_name = attributes.get("ai.agent.name") or self.resource_attributes.get(
             "service.name"
@@ -351,7 +363,7 @@ class Trace:
             f"{color_blue}[{self.trace_id}/{self.parent_span.span_id if self.parent_span else 'root'}/{self.span_id}]{color_reset} "
             f"{color_cyan}{agent_name or "<missing service.name>"}{color_reset} "
             f"{span_kind_color}{self.span_kind}{color_reset} "
-            f"{color_white}{start_time} - {self.span_name}{' [SNAPSHOT]' if not self.ended_at else ''}{color_reset}"
+            f"{color_white}{self.span_name} - {start_time} {f'- {end_time} {duration_time} ' if end_time else ''}{f' [SNAPSHOT - {cloned_at}]' if not self.ended_at else ''}{color_reset}"
             f"\n{f'  {color_yellow}{attrs_str}{color_reset}' if attrs_str else ''}"
         )
 

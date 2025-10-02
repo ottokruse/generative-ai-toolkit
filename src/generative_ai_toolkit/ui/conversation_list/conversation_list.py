@@ -76,6 +76,14 @@ class ConversationList(Protocol):
         """
         ...
 
+    def get_conversation(self, conversation_id: str) -> Conversation | None:
+        """
+        Get a conversation from the conversation list
+
+        Returns None if the conversation does not exist
+        """
+        ...
+
     def remove_conversation(self, conversation_id: str) -> None:
         """
         Remove a conversation from the conversation list
@@ -199,6 +207,29 @@ class SqliteConversationList(ConversationList):
         return Conversation(
             conversation_id=conversation_id, description=description, updated_at=now
         )
+
+    def get_conversation(self, conversation_id: str) -> Conversation | None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            cursor = conn.execute(
+                """
+                SELECT conversation_id, description, updated_at
+                FROM conversations
+                WHERE conversation_id = ?
+                """,
+                (conversation_id,),
+            )
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return Conversation(
+                conversation_id=row["conversation_id"],
+                description=row["description"],
+                updated_at=datetime.datetime.fromisoformat(row["updated_at"]),
+            )
 
     def remove_conversation(self, conversation_id: str) -> None:
         with sqlite3.connect(self.db_path) as conn:

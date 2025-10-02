@@ -422,9 +422,15 @@ def chat_messages_from_trace_summary(
                     if not trace.ended_at:
                         metadata["status"] = "pending"
                 else:
-                    tool_input_str = " ".join(
-                        f"{k}={repr_value(v)}"
-                        for k, v in trace.attributes.get("ai.tool.input", {}).items()
+                    tool_input_str = (
+                        " ".join(
+                            f"{k}={repr_value(v)}"
+                            for k, v in trace.attributes.get(
+                                "ai.tool.input", {}
+                            ).items()
+                        )
+                        if trace.ended_at
+                        else trace.attributes.get("ai.tool.input", "")
                     )
                     if len(tool_input_str) > 300:
                         tool_input_str = tool_input_str[:297] + "..."
