@@ -16,9 +16,8 @@ import functools
 import json
 import signal
 import textwrap
-import time
 from collections.abc import Callable, Iterable, Sequence
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
@@ -99,6 +98,7 @@ def chat_ui(
             user_input or None,  # Prefer None over empty string
             stop_event,
             messages,
+            gr.update(active=True),  # Activate flush timer
         )
 
     def describe_conversation(conversation_id: str, chatbot: list[gr.MessageDict]):
@@ -131,38 +131,78 @@ def chat_ui(
             stop_event.set()
         return gr.update(stop_btn=False)
 
+    def assistant_stream_(
+        agent_: Agent,
+        traces_: dict[str, Trace],
+        traces_lock_: Lock,
+        user_input_: str,
+        stop_event_: Event,
+        done_event_: Event,
+        exception: list[Exception],
+        trace_index: list[int],
+    ):
+        try:
+            for index, trace in enumerate(
+                agent_.converse_stream(
+                    user_input_, stream="traces", stop_event=stop_event_
+                )
+            ):
+                with traces_lock_:
+                    traces_[trace.span_id] = trace
+                    trace_index[0] = index
+        except Exception as err:
+            exception.append(err)
+        finally:
+            done_event_.set()
+
     def assistant_stream(
         conversation_id: str,
         traces_state: list[Trace],
         user_input: str | None,
         stop_event: Event | None,
-        yield_snapshot_every=0.25,
+        yield_traces_every=0.2,
     ):
         current_agent_instance = ensure_agent_instance(conversation_id)
-
-        last_snapshot_yielded = 0.0
         traces: dict[str, Trace] = {trace.span_id: trace for trace in traces_state}
-        for trace in current_agent_instance.converse_stream(
-            user_input, stream="traces", stop_event=stop_event
-        ):
-            trace_update = trace.span_id in traces
-            traces[trace.span_id] = trace
-            if (
-                trace_update
-                and not trace.ended_at
-                and trace.attributes.get("ai.trace.type") == "llm-invocation"
-            ):
-                # Throttle display of snapshots for LLM invocations only.
-                # LLM invocations typically generate many intermediate traces during
-                # token streaming, but tool invocations and other operations benefit
-                # from immediate display to show responsive agent behavior.
-                now = time.monotonic()
-                if last_snapshot_yielded + yield_snapshot_every > now:
-                    continue
-                last_snapshot_yielded = now
-            yield list(traces.values())
+        traces_lock = Lock()
+        exception = []
+        trace_index = [-1]
+        done_event = Event()
 
-    def traces_state_change(
+        thread = Thread(
+            target=assistant_stream_,
+            args=(
+                current_agent_instance,
+                traces,
+                traces_lock,
+                user_input,
+                stop_event,
+                done_event,
+                exception,
+                trace_index,
+            ),
+            name="assistant-stream",
+        )
+        thread.start()
+
+        last_trace_index = -1
+        while True:
+            if done_event.wait(yield_traces_every if last_trace_index != -1 else 0.05):
+                break
+            with traces_lock:
+                if traces:
+                    last_trace_index = trace_index[0]
+                    yield tuple(traces.values())
+
+        thread.join()
+
+        if exception:
+            raise exception[0]
+
+        if last_trace_index != trace_index[0]:
+            yield tuple(traces.values())
+
+    def apply_traces_state(
         traces: Iterable[Trace],
         show_traces: Literal["ALL", "CORE", "CONVERSATION_ONLY"] = "CORE",
     ):
@@ -305,6 +345,9 @@ def chat_ui(
 
         show_traces_state = gr.State(value=show_traces)
         traces_state = gr.State(value=[])
+        traces_state_render = gr.State(value=[])
+        chat_messages = gr.State(value=[])
+        traces_state_flush_timer = gr.Timer(0.2, active=False)
         stop_event = gr.State(value=None)
         last_user_input = gr.State("")
         last_conversation_id = gr.BrowserState(
@@ -573,11 +616,9 @@ def chat_ui(
         )
 
         show_traces_state.change(
-            traces_state_change,
+            apply_traces_state,
             inputs=[traces_state, show_traces_state],
-            outputs=[chatbot, new_chat_btn],
-            show_progress="hidden",
-            show_progress_on=[],
+            outputs=[chat_messages, new_chat_btn],
         )
 
         conversation_list_current_page.change(
@@ -600,6 +641,7 @@ def chat_ui(
                 last_user_input,
                 stop_event,
                 chatbot,
+                traces_state_flush_timer,
             ],
         )
 
@@ -618,6 +660,11 @@ def chat_ui(
             show_progress_on=[chatbot],
             queue=True,
         ).then(
+            # Final flush and deactivate timer
+            lambda traces: (traces, gr.update(active=False)),
+            inputs=[traces_state],
+            outputs=[traces_state_render, traces_state_flush_timer],
+        ).then(
             lambda: gr.update(interactive=True, submit_btn=True, stop_btn=False),
             outputs=[msg],
         ).then(
@@ -635,13 +682,22 @@ def chat_ui(
 
         msg.stop(user_stop, inputs=[stop_event], outputs=[msg])
 
-        traces_state.change(
-            traces_state_change,
-            inputs=[traces_state, show_traces_state],
-            outputs=[chatbot, new_chat_btn],
+        traces_state_flush_timer.tick(
+            lambda state: state, inputs=[traces_state], outputs=[traces_state_render]
+        )
+
+        traces_state_render.change(
+            apply_traces_state,
+            inputs=[traces_state_render, show_traces_state],
+            outputs=[chat_messages, new_chat_btn],
+        )
+
+        chat_messages.change(
+            lambda state: state,
+            inputs=[chat_messages],
+            outputs=[chatbot],
             show_progress="hidden",
             show_progress_on=[],
-            queue=True,
         )
 
         chatbot.clear(
@@ -680,6 +736,7 @@ def chat_ui(
 
             return (
                 current_agent_instance.traces,
+                current_agent_instance.traces,
                 gr.update(
                     label=f"Conversation: {current_agent_instance.conversation_id}"
                 ),
@@ -694,6 +751,7 @@ def chat_ui(
             inputs=[last_conversation_id],
             outputs=[
                 traces_state,
+                traces_state_render,
                 chatbot,
                 msg,
                 conversation_id,

@@ -416,3 +416,84 @@ class DynamoDbConversationHistory(BaseConversationHistory):
             last_evaluated_key_param = {
                 "ExclusiveStartKey": response["LastEvaluatedKey"]
             }
+
+
+class WriteThroughCache(ConversationHistory):
+    """
+    A write-through cache wrapper for ConversationHistory implementations.
+
+    This cache is designed to be reset per turn, which is safe because:
+    - A turn is always handled by one agent instance
+    - The next turn might hit a different instance
+    - So in-memory caching per turn works, but NOT across turns
+
+    The cache uses context_key as the cache key. Within a turn, messages
+    are cached across all cycles. Call reset_cache() at the start of each
+    turn to ensure fresh reads from storage.
+
+    Note: This class is NOT thread-safe. It assumes sequential access within
+    a single turn.
+    """
+
+    def __init__(self, conversation_history: ConversationHistory) -> None:
+        self._wrapped = conversation_history
+        self._cache: list[MessageUnionTypeDef] | None = None
+        self._cache_key: Hashable | None = None
+
+    def reset_cache(self) -> None:
+        """Clear the per-turn cache."""
+        self._cache = None
+        self._cache_key = None
+
+    @property
+    def conversation_id(self) -> str:
+        return self._wrapped.conversation_id
+
+    @property
+    def subcontext_id(self) -> str | None:
+        return self._wrapped.subcontext_id
+
+    @property
+    def auth_context(self) -> AuthContext:
+        return self._wrapped.auth_context
+
+    @property
+    def context_key(self) -> Hashable:
+        return self._wrapped.context_key
+
+    def set_conversation_id(
+        self, conversation_id: str, *, subcontext_id: str | None = None
+    ) -> None:
+        return self._wrapped.set_conversation_id(
+            conversation_id, subcontext_id=subcontext_id
+        )
+
+    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
+        return self._wrapped.set_auth_context(**auth_context)
+
+    def reset(self) -> None:
+        self._wrapped.reset()
+
+    @property
+    def messages(self) -> "Sequence[MessageUnionTypeDef]":
+        """Get messages with caching. Cache is valid across all cycles within a turn."""
+        current_key = self.context_key
+
+        # Check cache validity
+        if self._cache is not None and self._cache_key == current_key:
+            return tuple(self._cache)
+
+        # Cache miss - read from storage
+        messages = list(self._wrapped.messages)
+        self._cache = messages
+        self._cache_key = current_key
+        return tuple(messages)
+
+    def add_message(self, msg: "MessageUnionTypeDef") -> None:
+        """Add message with write-through: updates both storage and cache."""
+        # Write through to storage
+        self._wrapped.add_message(msg)
+
+        # Update cache if valid
+        if self._cache is not None and self._cache_key == self.context_key:
+            self._cache.append(msg)

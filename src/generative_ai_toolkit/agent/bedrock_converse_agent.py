@@ -22,7 +22,7 @@ import warnings
 import weakref
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from concurrent.futures import Executor, ThreadPoolExecutor
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from contextlib import ExitStack
 from threading import Event, Lock, Thread
 from typing import (
@@ -42,7 +42,7 @@ import boto3.session
 import botocore.exceptions
 from botocore.config import Config
 
-from generative_ai_toolkit.agent.agent import Agent
+from generative_ai_toolkit.agent.agent import Agent, AgentAsTool, AgentWithTools
 from generative_ai_toolkit.agent.bedrock_converse_stream import (
     BedrockConverseStreamEventContentBlockHandler,
 )
@@ -54,6 +54,7 @@ from generative_ai_toolkit.context import AgentContext, AuthContext
 from generative_ai_toolkit.conversation_history import (
     ConversationHistory,
     InMemoryConversationHistory,
+    WriteThroughCache,
 )
 from generative_ai_toolkit.exceptions import StopEventAbortError
 from generative_ai_toolkit.tracer import (
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
+        ContentBlockTypeDef,
         ConverseRequestTypeDef,
         ConverseStreamRequestTypeDef,
         GuardrailStreamConfigurationTypeDef,
@@ -97,15 +99,17 @@ if TYPE_CHECKING:
 
 class BedrockConverseAgent(Agent):
     _model_id: str
-    _system_prompt: str | None
+    _system_prompt: str | Callable[[AgentContext], str] | None
     _tools: dict[str, Tool]
     _tools_lock: Lock
-    _conversation_history: ConversationHistory
+    _conversation_history: WriteThroughCache
     _tracer: ChainableTracer
+    _cycle_nr: int
+    _turn_nr: int
 
     # class attribute to track the conversation history instances used,
     # to prevent accidental double usage, see below.
-    _instances_used: set[weakref.ReferenceType] = set()
+    _instances_used: weakref.WeakSet = weakref.WeakSet()
 
     class _QueueTracer(QueueTracer):
         """
@@ -127,7 +131,7 @@ class BedrockConverseAgent(Agent):
         self,
         *,
         model_id: str,
-        system_prompt: str | None = None,
+        system_prompt: str | Callable[[AgentContext], str] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -148,6 +152,7 @@ class BedrockConverseAgent(Agent):
         session: boto3.session.Session | None = None,
         bedrock_client: "BedrockRuntimeClient | None" = None,
         tools: Sequence[Callable | Tool] | None = None,
+        tool_filter: Callable[[AgentContext, str, Tool], bool] = lambda *_: True,
         max_successive_tool_invocations: int = 30,
         executor: Executor | None = None,
         tool_result_json_encoder: type[json.JSONEncoder] | None = None,
@@ -165,8 +170,8 @@ class BedrockConverseAgent(Agent):
         ----------
         model_id : str
             The model identifier to use for the agent. Pick one from https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html
-        system_prompt : str | None, optional
-            A prompt that provides instructions or context to the model about the task it should perform, or the persona it should adopt during the conversation.
+        system_prompt : str | Callable[[AgentContext], str] | None, optional
+            A prompt, or Callable that returns a prompt, that provides instructions or context to the model about the task it should perform, or the persona it should adopt during the conversation.
         max_tokens : int | None, optional
             The maximum number of tokens to allow in the generated response. The default value is the maximum allowed value for the model that you are using.
         temperature : float | None, optional
@@ -203,6 +208,12 @@ class BedrockConverseAgent(Agent):
             Boto3 client for "bedrock-runtime", by default None (use provided session to create a client)
         tools : Sequence[Callable] | None, optional
             Tools available to the agent
+        tool_filter : Callable[[AgentContext, str, Tool], bool], optional
+            A function that determines which of the registered tools should actually be included in the next LLM invocation.
+            The function is invoked before each LLM invocation, for each registered tool, and receives the agent context, tool name, and tool as arguments.
+            The function should return True if the tool should be included in the next LLM invocation, or False to exclude it.
+            Use this to implement dynamic tool availability based on context (including conversation history, turn nr, cycle nr, etc.).
+            By default, all registered tools are available.
         max_successive_tool_invocations : int, optional
             Maximum number of consecutive tool calls, by default 30
         executor : Executor | None, optional
@@ -230,6 +241,7 @@ class BedrockConverseAgent(Agent):
         self._system_prompt = system_prompt
         self._model_id = model_id
         self._tools = {}
+        self._tool_filter = tool_filter
         self._tools_lock = Lock()
         self.bedrock_client: BedrockRuntimeClient = bedrock_client or (
             session or boto3
@@ -241,20 +253,21 @@ class BedrockConverseAgent(Agent):
             ),
         )
         if not conversation_history:
-            self._conversation_history = InMemoryConversationHistory()
+            self._conversation_history = WriteThroughCache(
+                InMemoryConversationHistory()
+            )
         else:
             if callable(conversation_history):
                 conversation_history = conversation_history()
-            ref = weakref.ref(conversation_history)
-            if ref in self._instances_used:
+            if conversation_history in self._instances_used:
                 raise RuntimeError(
-                    f"Cannot use the same ConversationHistory instance {ref()} across multiple agent instances. "
+                    f"Cannot use the same ConversationHistory instance {conversation_history} across multiple agent instances. "
                     "Instead, pass a new ConversationHistory instance, or a ConversationHistory factory."
                 )
             else:
-                self._instances_used.add(ref)
-            self._conversation_history = conversation_history
-            weakref.finalize(self, self._prune_instances_used)
+                self._instances_used.add(conversation_history)
+            # Wrap with WriteThroughCache
+            self._conversation_history = WriteThroughCache(conversation_history)
         if not tracer:
             self._tracer = TeeTracer().add_tracer(InMemoryTracer())
         else:
@@ -264,7 +277,6 @@ class BedrockConverseAgent(Agent):
                 self._tracer = tracer
             else:
                 self._tracer = TeeTracer().add_tracer(tracer)
-            weakref.finalize(self, self._prune_instances_used)
         resource_attributes = self.tracer.context.resource_attributes
         if "service.name" not in resource_attributes:
             self.tracer.set_context(
@@ -327,6 +339,8 @@ class BedrockConverseAgent(Agent):
         self.stop_event_abort_message = stop_event_abort_message
 
         self._subagent_lock: dict[str, Lock] = {}
+        self._cycle_nr = -1
+        self._turn_nr = -1
 
     def spawn(self):
         """
@@ -359,10 +373,6 @@ class BedrockConverseAgent(Agent):
 
         return spawned
 
-    @classmethod
-    def _prune_instances_used(cls):
-        cls._instances_used = {r for r in cls._instances_used if r() is not None}
-
     @property
     def model_id(self):
         return self._model_id
@@ -392,6 +402,10 @@ class BedrockConverseAgent(Agent):
         """
         Get the messages sent to the agent so far (for the current conversation)
         """
+        return self._conversation_history.messages
+
+    @property
+    def _messages_traced(self):
         with self._tracer.trace(
             "conversation-history-list", span_kind="CLIENT"
         ) as span:
@@ -401,9 +415,109 @@ class BedrockConverseAgent(Agent):
                 repr(self._conversation_history),
             )
             span.add_attribute("peer.service", "memory:short-term")
-            messages = self._conversation_history.messages
+            messages = self.messages
             span.add_attribute("ai.conversation.history.messages", messages)
             return messages
+
+    @staticmethod
+    def _calculate_turn_nr(messages: "Sequence[MessageUnionTypeDef]") -> int:
+        """
+        Calculate the current turn number based on the conversation history.
+
+        The turn number is the count of completed assistant messages (0-based).
+
+        Parameters
+        ----------
+        messages : Sequence[MessageUnionTypeDef]
+            The messages in the conversation history
+        """
+        return sum(
+            1
+            for msg in messages
+            if msg["role"] == "assistant"
+            and not any("toolUse" in cb for cb in msg["content"])
+        )
+
+    def add_missing_tool_results(self, messages: "Sequence[MessageUnionTypeDef]"):
+        """
+        Add missing tool results to the message sequence when tool invocations lack corresponding results.
+
+        This function inspects the most recent messages in the conversation to detect situations where
+        the assistant has invoked tools but the corresponding tool results are incomplete or missing.
+        When this occurs, it synthesizes error tool results to ensure the conversation can continue
+        without breaking the Bedrock Converse API requirements.
+        """
+        if len(messages) <= 1:
+            return messages
+
+        last_user_message_idx: int | None = None
+        last_assistant_message_idx: int | None = None
+        for index in range(len(messages) - 1, max(-1, len(messages) - 3), -1):
+            if (
+                last_user_message_idx is not None
+                and last_assistant_message_idx is not None
+            ):
+                break
+            msg = messages[index]
+            if msg["role"] == "user":
+                if last_user_message_idx is None:
+                    last_user_message_idx = index
+            elif msg["role"] == "assistant":
+                if last_assistant_message_idx is None:
+                    last_assistant_message_idx = index
+        # Early return if user message comes after assistant message
+        if (
+            last_user_message_idx is not None
+            and last_assistant_message_idx is not None
+            and last_user_message_idx > last_assistant_message_idx
+        ):
+            return messages
+        if last_assistant_message_idx is None:
+            return messages
+        tool_use_ids = {
+            cb["toolUse"]["toolUseId"]
+            for cb in messages[last_assistant_message_idx]["content"]
+            if "toolUse" in cb
+        }
+        if not tool_use_ids:
+            return messages
+        tool_results: set[str] = set()
+        if last_user_message_idx is not None:
+            tool_results = {
+                cb["toolResult"]["toolUseId"]
+                for cb in messages[last_user_message_idx]["content"]
+                if "toolResult" in cb
+            }
+        if tool_use_ids == tool_results:
+            return messages
+        messages_ = list(messages)
+        last_user_message: MessageUnionTypeDef
+        if last_user_message_idx is None:
+            last_user_message = {"role": "user", "content": []}
+            messages_.append(last_user_message)
+        else:
+            last_user_message = {
+                "role": "user",
+                "content": messages_[last_user_message_idx]["content"][:],
+            }
+            messages_[last_user_message_idx] = last_user_message
+        error_results: list[ContentBlockTypeDef] = []
+        for tool_use_id in tool_use_ids:
+            if tool_use_id not in tool_results:
+                error_results.append(
+                    {
+                        "toolResult": {
+                            "toolUseId": tool_use_id,
+                            "status": "error",
+                            "content": [{"text": "Failed to get tool result"}],
+                        }
+                    }
+                )
+        last_user_message["content"] = [
+            *last_user_message["content"],
+            *error_results,
+        ]
+        return messages_
 
     def _add_message(self, msg: "MessageUnionTypeDef") -> None:
         """
@@ -463,13 +577,13 @@ class BedrockConverseAgent(Agent):
         This recurses into all subagents that have been involved.
         """
 
-        def get_traces_recursive(
-            agent: AgentAsTool, attribute_filter: Mapping[str, Any]
-        ):
+        def get_traces_recursive(agent: Agent, attribute_filter: Mapping[str, Any]):
             traces = {
                 trace.span_id: trace
                 for trace in agent.tracer.get_traces(attribute_filter=attribute_filter)
             }
+            if not isinstance(agent, AgentWithTools):
+                return traces
 
             subagent_invocations: dict[AgentAsTool, dict[str, Trace]] = defaultdict(
                 dict
@@ -587,50 +701,49 @@ class BedrockConverseAgent(Agent):
 
     def _invoke_tools(
         self,
-        messages: Sequence["ContentBlockOutputTypeDef"],
+        content_blocks: Sequence["ContentBlockOutputTypeDef"],
         tools: Mapping[str, Tool],
         stop_event: Event | None,
+        agent_context: AgentContext,
     ) -> list["ToolResultBlockUnionTypeDef"]:
-        if len(messages) == 1:
+        if len(content_blocks) == 1:
             return [
-                AgentContext(
-                    auth_context=self.auth_context,
-                    tracer=self.tracer,
-                    conversation_id=self.conversation_id,
-                    stop_event=stop_event,
-                    context_key=self.conversation_history.context_key,
-                    agent=self,
+                agent_context.copy_context().run(
+                    self._invoke_tool, content_blocks[0], tools, stop_event
                 )
-                .copy_context()
-                .run(self._invoke_tool, messages[0], tools, stop_event)
             ]
         return list(
             self.executor.map(
                 lambda msg, ctx: ctx.run(self._invoke_tool, msg, tools, stop_event),
-                messages,
-                (
-                    AgentContext(
-                        auth_context=self.auth_context,
-                        tracer=self.tracer,
-                        conversation_id=self.conversation_id,
-                        stop_event=stop_event,
-                        context_key=self.conversation_history.context_key,
-                        agent=self,
-                    ).copy_context()
-                    for _ in messages
-                ),
+                content_blocks,
+                (agent_context.copy_context() for _ in content_blocks),
             )
+        )
+
+    def _invoke_tool_async(
+        self,
+        content_block: "ContentBlockOutputTypeDef",
+        tools: Mapping[str, Tool],
+        stop_event: Event | None,
+        agent_context: AgentContext,
+    ) -> Future["ToolResultBlockUnionTypeDef"]:
+        return self.executor.submit(
+            agent_context.copy_context().run,
+            self._invoke_tool,
+            content_block,
+            tools,
+            stop_event,
         )
 
     def _invoke_tool(
         self,
-        msg: "ContentBlockOutputTypeDef",
+        content_block: "ContentBlockOutputTypeDef",
         tools: Mapping[str, Tool],
         stop_event: Event | None,
     ) -> "ToolResultBlockUnionTypeDef":
-        if "toolUse" not in msg:
+        if "toolUse" not in content_block:
             raise ValueError("Invalid tool usage.")
-        tool_use = msg["toolUse"]
+        tool_use = content_block["toolUse"]
         if stop_event and stop_event.is_set():
             return {
                 "toolUseId": tool_use["toolUseId"],
@@ -662,14 +775,14 @@ class BedrockConverseAgent(Agent):
                     with ExitStack() as exit_stack:
                         if isinstance(tool, Spawnable):
                             tool = tool.spawn()
-                        else:
+                        elif tool_name in self._subagent_lock:
                             # The agent cannot be invoked in parallel, so acquire lock:
                             exit_stack.enter_context(self._subagent_lock[tool_name])
 
                         # If we're using a _QueueTracer or _IterableTracer,
                         # i.e. we're processing converse_stream(..., stream="traces"),
                         # then we should also attach a _QueueTracer to the subagent,
-                        # sp that its traces are collected into the original _IterableTracer
+                        # so that its traces are collected into the original _IterableTracer
                         if isinstance(tool.tracer, ChainableTracer):
                             queue = next(
                                 (
@@ -833,6 +946,10 @@ class BedrockConverseAgent(Agent):
         current_trace.add_attribute(
             "ai.auth.context", self.auth_context, inheritable=True
         )
+        # Reset cache at turn start (BEFORE calculating turn_nr!)
+        self._conversation_history.reset_cache()
+        self._turn_nr = self._calculate_turn_nr(self._messages_traced)
+        current_trace.add_attribute("ai.turn.nr", self._turn_nr, inheritable=True)
         if self.name:
             current_trace.add_attribute("ai.agent.name", self.name, inheritable=True)
         current_trace.add_attribute("ai.user.input", user_input)
@@ -858,53 +975,74 @@ class BedrockConverseAgent(Agent):
                 },
             )
 
-        request: ConverseRequestTypeDef = {
-            "modelId": self.model_id,
-            "inferenceConfig": self.default_inference_config,
-            "messages": list(self.messages),
-        }
-        if self.default_guardrail_config:
-            request["guardrailConfig"] = self.default_guardrail_config
-        if self.system_prompt:
-            request["system"] = [
-                {
-                    "text": self.system_prompt,
-                },
-            ]
-        if self.default_model_request_fields:
-            request["additionalModelRequestFields"] = self.default_model_request_fields
-        if self.default_model_response_field_paths:
-            request["additionalModelResponseFieldPaths"] = (
-                self.default_model_response_field_paths
-            )
-        if self.default_prompt_variables:
-            request["promptVariables"] = self.default_prompt_variables
-        if self.default_request_metadata:
-            request["requestMetadata"] = self.default_request_metadata
-        if self.default_performance_config:
-            request["performanceConfig"] = self.default_performance_config
-        tools_available = self.tools
+        explicit_tools: dict[str, Tool] | None = None
         if tools is not None:
-            tools = [
-                BedrockConverseTool(tool) if callable(tool) else tool for tool in tools
-            ]
-            tools_available = (
-                {tool.tool_spec["name"]: tool for tool in tools}
-                if tools is not None
-                else {}
-            )
-        if tools_available:
-            request["toolConfig"] = {
-                "tools": [
-                    {"toolSpec": tool.tool_spec} for tool in tools_available.values()
-                ],
-            }
+            explicit_tools = {}
+            for tool in tools:
+                tool_ = BedrockConverseTool(tool) if callable(tool) else tool
+                explicit_tools[tool_.tool_spec["name"]] = tool_
 
         texts: list[str] = []
         for i in range(self.max_converse_iterations):
+            self._cycle_nr = i
             with self._tracer.trace(f"cycle-{i}") as cycle_trace:
                 cycle_trace.add_attribute("ai.trace.type", "cycle")
                 cycle_trace.add_attribute("ai.agent.cycle.nr", i, inheritable=True)
+
+                agent_context = AgentContext(
+                    auth_context=self.auth_context,
+                    tracer=self.tracer,
+                    conversation_id=self.conversation_id,
+                    subcontext_id=self.subcontext_id,
+                    stop_event=stop_event,
+                    context_key=self.conversation_history.context_key,
+                    messages=self.messages,
+                    agent=self,
+                    cycle_nr=i,
+                    turn_nr=self._turn_nr,
+                )
+                request: ConverseRequestTypeDef = {
+                    "modelId": self.model_id,
+                    "inferenceConfig": self.default_inference_config,
+                    "messages": self.add_missing_tool_results(self.messages),
+                }
+                if self.system_prompt:
+                    if callable(self.system_prompt):
+                        system_prompt = self.system_prompt(agent_context)
+                    else:
+                        system_prompt = self.system_prompt
+                    request["system"] = [
+                        {
+                            "text": system_prompt,
+                        },
+                    ]
+                tools_available = (
+                    explicit_tools if explicit_tools is not None else self.tools
+                )
+                if tools_available:
+                    request["toolConfig"] = {
+                        "tools": [
+                            {"toolSpec": tool.tool_spec}
+                            for tool_name, tool in tools_available.items()
+                            if self._tool_filter(agent_context, tool_name, tool)
+                        ],
+                    }
+                if self.default_guardrail_config:
+                    request["guardrailConfig"] = self.default_guardrail_config
+                if self.default_model_request_fields:
+                    request["additionalModelRequestFields"] = (
+                        self.default_model_request_fields
+                    )
+                if self.default_model_response_field_paths:
+                    request["additionalModelResponseFieldPaths"] = (
+                        self.default_model_response_field_paths
+                    )
+                if self.default_prompt_variables:
+                    request["promptVariables"] = self.default_prompt_variables
+                if self.default_request_metadata:
+                    request["requestMetadata"] = self.default_request_metadata
+                if self.default_performance_config:
+                    request["performanceConfig"] = self.default_performance_config
 
                 with self._tracer.trace("llm-invocation", span_kind="CLIENT") as trace:
                     model_id = request["modelId"]
@@ -1045,6 +1183,7 @@ class BedrockConverseAgent(Agent):
                             tool_invoke_instructions,
                             tools_available,
                             stop_event=stop_event,
+                            agent_context=agent_context,
                         )
                         self._add_message(
                             {
@@ -1057,7 +1196,7 @@ class BedrockConverseAgent(Agent):
                                 ],
                             },
                         )
-                        request["messages"] = list(self.messages)
+                        request["messages"] = self.messages[:]
                         continue
 
                 if response["stopReason"] in (
@@ -1071,7 +1210,7 @@ class BedrockConverseAgent(Agent):
                     return concatenated
 
         raise Exception(
-            "Too many successive tool invocations:{self.max_converse_iterations} "
+            f"Too many successive tool invocations: {self.max_converse_iterations}"
         )
 
     @overload
@@ -1207,6 +1346,10 @@ class BedrockConverseAgent(Agent):
         current_trace.add_attribute(
             "ai.auth.context", self.auth_context, inheritable=True
         )
+        # Reset cache at turn start (BEFORE calculating turn_nr!)
+        self._conversation_history.reset_cache()
+        self._turn_nr = self._calculate_turn_nr(self._messages_traced)
+        current_trace.add_attribute("ai.turn.nr", self._turn_nr, inheritable=True)
         if self.name:
             current_trace.add_attribute("ai.agent.name", self.name, inheritable=True)
         current_trace.add_attribute("ai.user.input", user_input)
@@ -1231,55 +1374,76 @@ class BedrockConverseAgent(Agent):
                 },
             )
 
-        request: ConverseStreamRequestTypeDef = {
-            "modelId": self.model_id,
-            "inferenceConfig": self.default_inference_config,
-            "messages": self.messages,
-        }
-        if self.default_guardrail_config:
-            request["guardrailConfig"] = self.default_guardrail_config
-        if self.system_prompt:
-            request["system"] = [
-                {
-                    "text": self.system_prompt,
-                },
-            ]
-        if self.default_model_request_fields:
-            request["additionalModelRequestFields"] = self.default_model_request_fields
-        if self.default_model_response_field_paths:
-            request["additionalModelResponseFieldPaths"] = (
-                self.default_model_response_field_paths
-            )
-        if self.default_prompt_variables:
-            request["promptVariables"] = self.default_prompt_variables
-        if self.default_request_metadata:
-            request["requestMetadata"] = self.default_request_metadata
-        if self.default_performance_config:
-            request["performanceConfig"] = self.default_performance_config
-        tools_available = self.tools
+        explicit_tools: dict[str, Tool] | None = None
         if tools is not None:
-            tools = [
-                BedrockConverseTool(tool) if callable(tool) else tool for tool in tools
-            ]
-            tools_available = (
-                {tool.tool_spec["name"]: tool for tool in tools}
-                if tools is not None
-                else {}
-            )
-        if tools_available:
-            request["toolConfig"] = {
-                "tools": [
-                    {"toolSpec": tool.tool_spec} for tool in tools_available.values()
-                ],
-            }
+            explicit_tools = {}
+            for tool in tools:
+                tool_ = BedrockConverseTool(tool) if callable(tool) else tool
+                explicit_tools[tool_.tool_spec["name"]] = tool_
 
         texts: list[str] = []
         for i in range(self.max_converse_iterations):
+            self._cycle_nr = i
             with self._tracer.trace(f"cycle-{i}") as cycle_trace:
                 cycle_trace.add_attribute("ai.trace.type", "cycle")
                 cycle_trace.add_attribute("ai.agent.cycle.nr", i, inheritable=True)
 
                 texts.append("")
+                agent_context = AgentContext(
+                    auth_context=self.auth_context,
+                    tracer=self.tracer,
+                    conversation_id=self.conversation_id,
+                    subcontext_id=self.subcontext_id,
+                    stop_event=stop_event,
+                    context_key=self.conversation_history.context_key,
+                    messages=self.messages,
+                    agent=self,
+                    cycle_nr=i,
+                    turn_nr=self._turn_nr,
+                )
+
+                request: ConverseStreamRequestTypeDef = {
+                    "modelId": self.model_id,
+                    "inferenceConfig": self.default_inference_config,
+                    "messages": self.add_missing_tool_results(self.messages),
+                }
+                if self.system_prompt:
+                    if callable(self.system_prompt):
+                        system_prompt = self.system_prompt(agent_context)
+                    else:
+                        system_prompt = self.system_prompt
+                    request["system"] = [
+                        {
+                            "text": system_prompt,
+                        },
+                    ]
+                tools_available = (
+                    explicit_tools if explicit_tools is not None else self.tools
+                )
+                if tools_available:
+                    request["toolConfig"] = {
+                        "tools": [
+                            {"toolSpec": tool.tool_spec}
+                            for tool_name, tool in tools_available.items()
+                            if self._tool_filter(agent_context, tool_name, tool)
+                        ],
+                    }
+                if self.default_guardrail_config:
+                    request["guardrailConfig"] = self.default_guardrail_config
+                if self.default_model_request_fields:
+                    request["additionalModelRequestFields"] = (
+                        self.default_model_request_fields
+                    )
+                if self.default_model_response_field_paths:
+                    request["additionalModelResponseFieldPaths"] = (
+                        self.default_model_response_field_paths
+                    )
+                if self.default_prompt_variables:
+                    request["promptVariables"] = self.default_prompt_variables
+                if self.default_request_metadata:
+                    request["requestMetadata"] = self.default_request_metadata
+                if self.default_performance_config:
+                    request["performanceConfig"] = self.default_performance_config
 
                 with self._tracer.trace("llm-invocation", span_kind="CLIENT") as trace:
                     model_id = request["modelId"]
@@ -1351,6 +1515,9 @@ class BedrockConverseAgent(Agent):
                     content_block_handler = (
                         BedrockConverseStreamEventContentBlockHandler()
                     )
+                    tool_invocation_futures: list[
+                        Future[ToolResultBlockUnionTypeDef]
+                    ] = []
 
                     if response:
                         is_reasoning = False
@@ -1462,7 +1629,11 @@ class BedrockConverseAgent(Agent):
                                                 yield "\n</thinking>\n\n"
 
                             elif "contentBlockStop" in stream_event:
-                                content_block_handler.process_stream_event(stream_event)
+                                content_block = (
+                                    content_block_handler.process_stream_event(
+                                        stream_event
+                                    )
+                                )
                                 trace.add_attribute(
                                     "ai.llm.response.output",
                                     {
@@ -1472,6 +1643,15 @@ class BedrockConverseAgent(Agent):
                                     },
                                 )
                                 trace.emit_snapshot()
+                                if content_block and "toolUse" in content_block:
+                                    fut = self._invoke_tool_async(
+                                        content_block,
+                                        tools_available,
+                                        stop_event,
+                                        agent_context,
+                                    )
+                                    tool_invocation_futures.append(fut)
+
                             elif "messageStart" in stream_event:
                                 pass
 
@@ -1552,29 +1732,19 @@ class BedrockConverseAgent(Agent):
                     texts.pop()
                 self._add_message(message)
 
-                tool_invoke_instructions = [
-                    content_block
-                    for content_block in content_block_handler.finalized_blocks
-                    if "toolUse" in content_block
-                ]
-                if tool_invoke_instructions:
-                    tool_results = self._invoke_tools(
-                        tool_invoke_instructions,
-                        tools_available,
-                        stop_event=stop_event,
-                    )
+                if tool_invocation_futures:
                     self._add_message(
                         {
                             "role": "user",
                             "content": [
                                 {
-                                    "toolResult": tool_result,
+                                    "toolResult": fut.result(),
                                 }
-                                for tool_result in tool_results
+                                for fut in tool_invocation_futures
                             ],
                         },
                     )
-                    request["messages"] = self.messages
+                    request["messages"] = self.messages[:]
                     continue
 
                 elif stop_reason in (
@@ -1587,9 +1757,11 @@ class BedrockConverseAgent(Agent):
                     break
 
         else:
-            raise Exception("Too many successive tool invocations")
+            raise Exception(
+                f"Too many successive tool invocations: {self.max_converse_iterations}"
+            )
 
-    def invoke(self, *args, **kwargs) -> Any:
+    def invoke(self, **kwargs) -> Any:
         """
         Invoke an agent as tool.
 
@@ -1614,7 +1786,7 @@ class BedrockConverseAgent(Agent):
         # It is not actually an input parameter of converse_stream()
         kwargs.pop("subcontext_id", None)
 
-        response = "".join(self.converse_stream(*args, **kwargs, user_input=user_input))
+        response = "".join(self.converse_stream(**kwargs, user_input=user_input))
         return json.dumps({"response": response, "subcontext_id": self.subcontext_id})
 
     @property
@@ -1680,58 +1852,5 @@ class Spawnable(Protocol):
     def spawn(self: C) -> C:
         """
         Spawn a new independent instance of self.
-        """
-        ...
-
-
-@runtime_checkable
-class AgentAsTool(Protocol):
-    def invoke(self, *args, **kwargs) -> Any:
-        """
-        Invoke the agent as tool. This method is used, when the agent is registered as a tool with another agent.
-        """
-        ...
-
-    @property
-    def tool_spec(self) -> "ToolSpecificationTypeDef":
-        """
-        The tool specification of the agent, that allows it to be registered as a tool with another agent.
-        """
-        ...
-
-    @property
-    def tools(self) -> dict[str, Tool]:
-        """
-        The tools that have been registered with the agent.
-        The agent can decide to use these tools during conversations.
-        """
-        ...
-
-    @property
-    def tracer(self) -> Tracer:
-        """
-        Get the tracer instance of the agent
-        """
-        ...
-
-    def set_trace_context(
-        self, **update: Unpack[TraceContextUpdate]
-    ) -> Callable[[], None]:
-        """
-        Set the trace context of the agent
-        """
-        ...
-
-    def set_conversation_id(
-        self, conversation_id: str, *, subcontext_id: str | None = None
-    ) -> None:
-        """
-        Set the current conversation id and subcontext_id (if any) of the agent.
-        """
-        ...
-
-    def set_auth_context(self, **auth_context: Unpack[AuthContext]) -> None:
-        """
-        Set the auth context of the agent.
         """
         ...

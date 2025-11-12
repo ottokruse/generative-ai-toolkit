@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from threading import Event
 from typing import (
     TYPE_CHECKING,
@@ -28,9 +28,6 @@ from generative_ai_toolkit.agent.tool import (
     Tool,
 )
 from generative_ai_toolkit.context import AuthContext
-from generative_ai_toolkit.conversation_history import (
-    ConversationHistory,
-)
 from generative_ai_toolkit.tracer import (
     Trace,
     Tracer,
@@ -49,35 +46,6 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class Agent(Tool, Protocol):
-    @property
-    def model_id(self) -> str:
-        """
-        The LLM model_id of the agent
-        """
-        ...
-
-    @property
-    def system_prompt(self) -> str | None:
-        """
-        The system prompt of the agent
-        """
-        ...
-
-    @property
-    def tools(self) -> dict[str, Tool]:
-        """
-        The tools that have been registered with the agent.
-        The agent can decide to use these tools during conversations.
-        """
-        ...
-
-    @property
-    def conversation_history(self) -> ConversationHistory:
-        """
-        Get the conversation history instance of the agent.
-        """
-        ...
-
     @property
     def messages(self) -> Sequence["MessageUnionTypeDef"]:
         """
@@ -279,6 +247,21 @@ class Agent(Tool, Protocol):
         - The agent may decide to use tools, and will do so autonomously (limited by the max_successive_tool_invocations that you've set on the agent).
         """
         ...
+
+
+@runtime_checkable
+class AgentWithTools(Agent, Protocol):
+    @property
+    def tools(self) -> Mapping[str, Tool]:
+        """
+        The tools that have been registered with the agent.
+        The agent can decide to use these tools during conversations.
+        """
+        ...
+
+
+@runtime_checkable
+class AgentAsTool(Agent, Protocol):
 
     def invoke(self, *args, **kwargs) -> Any:
         """

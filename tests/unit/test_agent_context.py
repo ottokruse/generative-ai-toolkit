@@ -15,6 +15,7 @@
 
 from generative_ai_toolkit.agent import BedrockConverseAgent
 from generative_ai_toolkit.context import AgentContext, AuthContext
+from generative_ai_toolkit.test import Case, Expect
 from generative_ai_toolkit.tracer.trace import Trace
 
 
@@ -178,14 +179,12 @@ def test_set_test_context_custom_values():
     """Test set_test_context with custom values"""
     context = AgentContext.set_test_context(
         conversation_id="custom-conversation",
-        auth_context=AuthContext(
-            principal_id="custom-user", extra={"role": "admin"}
-        ),
+        auth_context=AuthContext(principal_id="custom-user", extra={"role": "admin"}),
     )
 
     assert context.conversation_id == "custom-conversation"
     assert context.auth_context["principal_id"] == "custom-user"
-    assert context.auth_context["extra"] == {"role": "admin"} # type: ignore
+    assert context.auth_context["extra"] == {"role": "admin"}  # type: ignore
 
     # Verify it's set as current
     current = AgentContext.current()
@@ -194,6 +193,7 @@ def test_set_test_context_custom_values():
 
 def test_tool_using_test_context():
     """Test that tools can use the test context"""
+
     def example_tool(message: str) -> str:
         context = AgentContext.current()
         return f"User {context.auth_context['principal_id']} says: {message}"
@@ -202,3 +202,47 @@ def test_tool_using_test_context():
     result = example_tool("Hello")
 
     assert result == "User test-user says: Hello"
+
+
+def test_agent_with_dynamic_tools(mock_bedrock_converse):
+
+    def test_tool():
+        """
+        A test tool
+        """
+        return "test"
+
+    def use_dynamic_tool(intent: str):
+        """
+        Use a dynamic tool, based on the intent.
+
+        Parameters
+        -----
+        intent : str
+          The user's intent
+        """
+        _agent = AgentContext.current().agent
+
+        assert _agent is agent
+        _agent.register_tool(test_tool)
+        assert "test_tool" in agent.tools
+
+        return intent
+
+    agent = BedrockConverseAgent(
+        model_id="dummy",
+        session=mock_bedrock_converse.session(),
+        tools=[use_dynamic_tool],
+    )
+
+    mock_bedrock_converse.add_output(
+        tool_use_output={"input": {"intent": "Nothing"}, "name": "use_dynamic_tool"}
+    )
+    mock_bedrock_converse.add_output(tool_use_output={"input": {}, "name": "test_tool"})
+    mock_bedrock_converse.add_output(
+        text_output="Looks like you got me a new tool, thanks!"
+    )
+
+    traces = Case(["Hi!"]).run(agent)
+    Expect(traces).tool_invocations.to_include("use_dynamic_tool")
+    Expect(traces).tool_invocations.to_include("test_tool")
