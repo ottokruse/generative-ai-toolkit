@@ -883,25 +883,26 @@ class BedrockConverseAgent(Agent):
             request["requestMetadata"] = self.default_request_metadata
         if self.default_performance_config:
             request["performanceConfig"] = self.default_performance_config
-        tools_available = self.tools
+        explicit_tools: dict[str, Tool] | None = None
         if tools is not None:
-            tools = [
-                BedrockConverseTool(tool) if callable(tool) else tool for tool in tools
-            ]
-            tools_available = (
-                {tool.tool_spec["name"]: tool for tool in tools}
-                if tools is not None
-                else {}
-            )
-        if tools_available:
-            request["toolConfig"] = {
-                "tools": [
-                    {"toolSpec": tool.tool_spec} for tool in tools_available.values()
-                ],
-            }
+            explicit_tools = {}
+            for tool in tools:
+                tool_ = BedrockConverseTool(tool) if callable(tool) else tool
+                explicit_tools[tool_.tool_spec["name"]] = tool_
 
         texts: list[str] = []
         for i in range(self.max_converse_iterations):
+            # Determine tools inside loop so dynamic tool registration by tools themselves can work
+            tools_available = (
+                explicit_tools if explicit_tools is not None else self.tools
+            )
+            if tools_available:
+                request["toolConfig"] = {
+                    "tools": [
+                        {"toolSpec": tool.tool_spec}
+                        for tool in tools_available.values()
+                    ],
+                }
             with self._tracer.trace(f"cycle-{i}") as cycle_trace:
                 cycle_trace.add_attribute("ai.trace.type", "cycle")
                 cycle_trace.add_attribute("ai.agent.cycle.nr", i, inheritable=True)
@@ -1256,25 +1257,26 @@ class BedrockConverseAgent(Agent):
             request["requestMetadata"] = self.default_request_metadata
         if self.default_performance_config:
             request["performanceConfig"] = self.default_performance_config
-        tools_available = self.tools
+        explicit_tools: dict[str, Tool] | None = None
         if tools is not None:
-            tools = [
-                BedrockConverseTool(tool) if callable(tool) else tool for tool in tools
-            ]
-            tools_available = (
-                {tool.tool_spec["name"]: tool for tool in tools}
-                if tools is not None
-                else {}
-            )
-        if tools_available:
-            request["toolConfig"] = {
-                "tools": [
-                    {"toolSpec": tool.tool_spec} for tool in tools_available.values()
-                ],
-            }
+            explicit_tools = {}
+            for tool in tools:
+                tool_ = BedrockConverseTool(tool) if callable(tool) else tool
+                explicit_tools[tool_.tool_spec["name"]] = tool_
 
         texts: list[str] = []
         for i in range(self.max_converse_iterations):
+            # Determine tools inside loop so dynamic tool registration by tools themselves can work
+            tools_available = (
+                explicit_tools if explicit_tools is not None else self.tools
+            )
+            if tools_available:
+                request["toolConfig"] = {
+                    "tools": [
+                        {"toolSpec": tool.tool_spec}
+                        for tool in tools_available.values()
+                    ],
+                }
             with self._tracer.trace(f"cycle-{i}") as cycle_trace:
                 cycle_trace.add_attribute("ai.trace.type", "cycle")
                 cycle_trace.add_attribute("ai.agent.cycle.nr", i, inheritable=True)

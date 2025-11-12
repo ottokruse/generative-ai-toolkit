@@ -19,12 +19,13 @@
 import contextvars
 from collections.abc import Hashable
 from threading import Event
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
 from generative_ai_toolkit.tracer import NoopTracer, Tracer
 from generative_ai_toolkit.utils.ulid import Ulid
 
 if TYPE_CHECKING:
+    # Prevent circular import by doing this only during TYPE_CHECKING:
     from generative_ai_toolkit.agent import Agent
 
 
@@ -61,10 +62,10 @@ class AgentContext:
     should consult the stop event regularly (`stop_event.is_set()`) and abort early if it is set
     """
 
-    context_key: Hashable
+    context_key: "Hashable"
     """The context key; tools can use it for advanced purposes such as caching results per unique context"""
 
-    agent: "Agent | None"
+    agent: "Agent"
     """
     The agent instance that is executing the tool; tools can use it for intricate operations
     such as registering new tools dynamically
@@ -76,9 +77,9 @@ class AgentContext:
         conversation_id: str,
         tracer: Tracer,
         auth_context: AuthContext,
+        agent: "Agent",
         stop_event: Event | None,
-        context_key: Hashable | None = None,
-        agent: "Agent | None" = None,
+        context_key: "Hashable | None" = None,
     ) -> None:
         self.conversation_id = conversation_id
         self.tracer = tracer
@@ -107,6 +108,7 @@ class AgentContext:
         auth_context: AuthContext | None = None,
         tracer: Tracer | None = None,
         stop_event: Event | None = None,
+        agent: "Agent | None" = None,
     ) -> "AgentContext":
         """
         Helper function to set up a test AgentContext for use in test fixtures.
@@ -121,12 +123,21 @@ class AgentContext:
             The tracer to use, by default NoopTracer()
         stop_event : Event, optional
             The stop event to use, by default None
+        agent : Agent, optional
+            The agent to use, by default a DummyAgent
 
         Returns
         -------
         AgentContext
             The configured test context that has been set as current
         """
+
+        class DummyAgent:
+            def __getattr__(self, name: str) -> Any:
+                raise NotImplementedError
+
+            def __setattr__(self, name: str, value: Any) -> None:
+                raise NotImplementedError
 
         context = cls(
             conversation_id=conversation_id,
@@ -137,6 +148,7 @@ class AgentContext:
                 else AuthContext(principal_id="test")
             ),
             stop_event=stop_event,
+            agent=agent or cast("Agent", DummyAgent()),
         )
         cls._current.set(context)
         return context
