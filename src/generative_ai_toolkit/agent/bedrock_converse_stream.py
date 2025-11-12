@@ -50,7 +50,6 @@ class BedrockConverseStreamEventContentBlockHandler:
     def __init__(self) -> None:
         self.finalized_blocks: list[ContentBlockOutputTypeDef] = []
         self.scratchpad: dict[int, Scratchpad] = {}
-        self.nr_of_events_handled = 0
 
     def ensure_scratchpad(self, index: int):
         if index not in self.scratchpad:
@@ -103,8 +102,7 @@ class BedrockConverseStreamEventContentBlockHandler:
                     ]["redactedContent"]
         elif "contentBlockStop" in stream_event:
             index = stream_event["contentBlockStop"]["contentBlockIndex"]
-            self.finalize_block(index)
-        self.nr_of_events_handled += 1
+            return self.finalize_block(index)
 
     def finalize_block(self, index: int):
         current_block = self.scratchpad[index]
@@ -139,6 +137,7 @@ class BedrockConverseStreamEventContentBlockHandler:
                 content_block["reasoningContent"]["redactedContent"] = redacted_content
 
         self.finalized_blocks.append(content_block)
+        return content_block
 
     def get_message(self, provisional=False) -> "MessageOutputTypeDef":
         content_blocks = self.finalized_blocks[:]

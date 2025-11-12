@@ -17,14 +17,17 @@
 
 
 import contextvars
-from collections.abc import Hashable
+from collections.abc import Hashable, Sequence
 from threading import Event
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
 from generative_ai_toolkit.tracer import NoopTracer, Tracer
 from generative_ai_toolkit.utils.ulid import Ulid
 
 if TYPE_CHECKING:
+    from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef
+
+    # Prevent circular import by doing this only during TYPE_CHECKING:
     from generative_ai_toolkit.agent import Agent
 
 
@@ -41,13 +44,15 @@ class AuthContext(TypedDict):
     Additional information to add to the AuthContext
     """
 
-
 class AgentContext:
 
     _current = contextvars.ContextVar["AgentContext"]("agent_context")
 
     conversation_id: str
     """The conversation ID"""
+
+    subcontext_id: str | None
+    """The subcontext ID"""
 
     tracer: Tracer
     """The tracer that is used by the agent; tools can use it for adding their own traces"""
@@ -61,31 +66,56 @@ class AgentContext:
     should consult the stop event regularly (`stop_event.is_set()`) and abort early if it is set
     """
 
-    context_key: Hashable
+    context_key: "Hashable"
     """The context key; tools can use it for advanced purposes such as caching results per unique context"""
 
-    agent: "Agent | None"
+    messages: Sequence["MessageUnionTypeDef"]
     """
-    The agent instance that is executing the tool; tools can use it for intricate operations
+    The messages exchanged in the current conversation so far
+    """
+
+    agent: "Agent"
+    """
+    Reference to the agent instance that is executing the tool; tools can use this reference for intricate operations
     such as registering new tools dynamically
+    """
+
+    cycle_nr: int
+    """
+    The current cycle number within a turn (0-based). A cycle represents one iteration of the agent's
+    reasoning loop, which may include an LLM invocation and optional tool executions.
+    """
+
+    turn_nr: int
+    """
+    The current turn number in the conversation (0-based). A turn encompasses all cycles needed
+    to generate a complete response to user input, starting from 0 for the first turn.
     """
 
     def __init__(
         self,
         *,
         conversation_id: str,
+        subcontext_id: str | None = None,
         tracer: Tracer,
         auth_context: AuthContext,
+        agent: "Agent",
         stop_event: Event | None,
-        context_key: Hashable | None = None,
-        agent: "Agent | None" = None,
+        context_key: "Hashable | None" = None,
+        messages: Sequence["MessageUnionTypeDef"] = (),
+        cycle_nr: int = 0,
+        turn_nr: int = 0,
     ) -> None:
         self.conversation_id = conversation_id
+        self.subcontext_id = subcontext_id
         self.tracer = tracer
         self.auth_context = auth_context
         self.stop_event = stop_event or Event()
         self.context_key = context_key or Ulid()
         self.agent = agent
+        self.messages = messages
+        self.cycle_nr = cycle_nr
+        self.turn_nr = turn_nr
 
     @classmethod
     def current(cls) -> "AgentContext":
@@ -104,9 +134,14 @@ class AgentContext:
         cls,
         *,
         conversation_id: str = "test",
+        subcontext_id: str | None = None,
         auth_context: AuthContext | None = None,
         tracer: Tracer | None = None,
         stop_event: Event | None = None,
+        agent: "Agent | None" = None,
+        messages: Sequence["MessageUnionTypeDef"] = (),
+        cycle_nr: int = 0,
+        turn_nr: int = 0,
     ) -> "AgentContext":
         """
         Helper function to set up a test AgentContext for use in test fixtures.
@@ -115,12 +150,22 @@ class AgentContext:
         ----------
         conversation_id : str, optional
             The conversation ID for testing, by default "test"
+        subcontext_id : str, optional
+            The subcontext ID for testing, by default None
         auth_context : AuthContext, optional
             The AuthContext for testing, by default AuthContext(principal_id="test")
         tracer : Tracer, optional
             The tracer to use, by default NoopTracer()
         stop_event : Event, optional
             The stop event to use, by default None
+        agent : Agent, optional
+            The agent to use, by default a DummyAgent
+        messages : Sequence["MessageUnionTypeDef"]
+            The messages exchanged in the conversation so far
+        cycle_nr : int, optional
+            The current cycle number, by default 0
+        turn_nr : int, optional
+            The current turn number, by default 0
 
         Returns
         -------
@@ -128,8 +173,16 @@ class AgentContext:
             The configured test context that has been set as current
         """
 
+        class DummyAgent:
+            def __getattr__(self, name: str) -> Any:
+                raise NotImplementedError
+
+            def __setattr__(self, name: str, value: Any) -> None:
+                raise NotImplementedError
+
         context = cls(
             conversation_id=conversation_id,
+            subcontext_id=subcontext_id,
             tracer=tracer or NoopTracer(),
             auth_context=(
                 auth_context.copy()
@@ -137,6 +190,10 @@ class AgentContext:
                 else AuthContext(principal_id="test")
             ),
             stop_event=stop_event,
+            agent=agent or cast("Agent", DummyAgent()),
+            messages=messages,
+            cycle_nr=cycle_nr,
+            turn_nr=turn_nr,
         )
         cls._current.set(context)
         return context

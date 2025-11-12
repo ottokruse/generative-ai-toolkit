@@ -17,6 +17,7 @@ from .conversation_history import (
     DynamoDbConversationHistory,
     InMemoryConversationHistory,
     SqliteConversationHistory,
+    WriteThroughCache,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "DynamoDbConversationHistory",
     "InMemoryConversationHistory",
     "SqliteConversationHistory",
+    "WriteThroughCache",
 ]
